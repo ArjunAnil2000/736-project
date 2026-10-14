@@ -7,6 +7,7 @@ Taught by Prof. Sara McAllister, Fall-26.
 
 1. Arjun Anil
 2. Sayali Kulkarni
+3. Aidan Liaw
 
 ## TODO
 
