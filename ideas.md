@@ -10,6 +10,7 @@ Document capturing potential project proposals.
 | 2. | (LDOS continuation) AI code evolution on cache_ext |
 | 3. | (LDOS new) Try code evolution on a new BPF interface (bpf_fault) |
 | 4. | Does adding a bpf interface cause performance drops? |
+| 5. | Cache_ext on a host containing SSD and HDD |
 
 ## 1. Survey of eBPF policies
 
@@ -53,3 +54,11 @@ Document capturing potential project proposals.
     - Take a generic application (no idea what to choose here, maybe we can do bench tester like elbencho for file systems or libcachesim or something)
 - **Result:** A comparison that reflects either a) adding the interface does cost some performance; b) adding the interface is good generally.
 - **The big question mark:** Finding the right workload/application to run might be problematic?
+
+## 5. Cache_ext on a host containing SSD and HDD
+
+- **Idea:** (Motived from the TMO paper of sorts). Due to the difference of performance characteristics in HDD and SSD, it means that a linux page cache policy that has a higher refault rate for page evicted to the HDD should theoratically perform worse than a policy that evicts pages belonging to files on SSD. The project would be to develop a eBPF policy which does this.
+  - This would involve understanding eBPF, how we could potentially detect if a page belongs to a file that is in a HDD/SSD or whether we would have to store that in a eBPF map based on PID etc.
+  - Experiments that we can do on this should be abundant but limited -- all I can think are of benchmarks involving read/scan of a file and toy programs that re-read a page.
+- **Result:** A report that should show improvement in performance due to this policy.
+- **The big question mark:** Would there be a workload that shows behaviour like this? i.e reading files from a HDD and SSD? Another potential issue is finding a host that has some kind of support for this? We could maybe plug in an external hard-drive into a computer and "pretend" it's the slower HDD even though the latency/throughput would have much more of a hit (USB connection so).
