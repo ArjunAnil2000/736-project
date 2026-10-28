@@ -1,0 +1,298 @@
+%%
+%% This is file `sigconf.tex',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% samples.dtx  (with options: `all,proceedings,sigconf')
+%% 
+%% IMPORTANT NOTICE:
+%% 
+%% For the copyright see the source file.
+%% 
+%% Any modified versions of this file must be renamed
+%% with new filenames distinct from sigconf.tex.
+%% 
+%% For distribution of the original source see the terms
+%% for copying and modification in the file samples.dtx.
+%% 
+%% This generated file may be distributed as long as the
+%% original source files, as listed above, are part of the
+%% same distribution. (The sources need not necessarily be
+%% in the same archive or directory.)
+%%
+%%
+%% Commands for TeXCount
+%TC:macro \cite [option:text,text]
+%TC:macro \citep [option:text,text]
+%TC:macro \citet [option:text,text]
+%TC:envir table 0 1
+%TC:envir table* 0 1
+%TC:envir tabular [ignore] word
+%TC:envir displaymath 0 word
+%TC:envir math 0 word
+%TC:envir comment 0 0
+%%
+%% The first command in your LaTeX source must be the \documentclass
+%% command.
+%%
+%% For submission and review of your manuscript please change the
+%% command to \documentclass[manuscript, screen, review]{acmart}.
+%%
+%% When submitting camera ready or to TAPS, please change the command
+%% to \documentclass[sigconf]{acmart} or whichever template is required
+%% for your publication.
+%%
+%%
+\documentclass[11pt,sigconf,nonacm]{acmart}
+
+% Reduce margins
+\geometry{
+    top=0.1in,
+    bottom=0.1in,
+    inner=0.5in,
+    outer=0.5in,
+    footskip=11pt
+}
+
+\makeatletter
+\renewcommand{\@titlefont}{\Large\sffamily\bfseries}
+\renewcommand{\@authorfont}{\normalsize}
+\renewcommand{\@affiliationfont}{\small}
+\renewcommand{\@secfont}{\bfseries\large\section@raggedright}
+\renewcommand{\@subsecfont}{\bfseries\normalsize\section@raggedright}
+
+% Title to author names
+\patchcmd{\@mktitle@iii}
+    {\par\bigskip}
+    {\par\vspace{2pt}}{}{}
+
+% Additional space before authors
+\patchcmd{\@mkauthors@iii}
+    {\par\medskip\leavevmode}
+    {\par\vspace{1pt}\leavevmode}{}{}
+
+% Authors to main body
+\patchcmd{\@mkauthors@iii}
+    {\and\par\bigskip}
+    {\and\par\vspace{2pt}}{}{}
+    
+\makeatother
+
+\raggedbottom
+
+\usepackage{xcolor}
+\usepackage{enumitem}
+
+%%
+%% \BibTeX command to typeset BibTeX logo in the docs
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    Bib\TeX}}}
+
+%% Rights management information.  This information is sent to you
+%% when you complete the rights form.  These commands have SAMPLE
+%% values in them; it is your responsibility as an author to replace
+%% the commands and values with those provided to you when you
+%% complete the rights form.
+
+%% These commands are for a PROCEEDINGS abstract or paper.
+
+%%
+%%  Uncomment \acmBooktitle if the title of the proceedings is different
+%%  from ``Proceedings of ...''!
+%%
+%%\acmBooktitle{Woodstock '18: ACM Symposium on Neural Gaze Detection,
+%%  June 03--05, 2018, Woodstock, NY}
+
+
+%%
+%% Submission ID.
+%% Use this when submitting an article to a sponsored event. You'll
+%% receive a unique submission ID from the organizers
+%% of the event, and this ID should be used as the parameter to this command.
+%%\acmSubmissionID{123-A56-BU3}
+
+%% (\include{caption} removed: there is no caption.tex and \include forces a page break)
+
+%%
+%% For managing citations, it is recommended to use bibliography
+%% files in BibTeX format.
+%%
+%% You can then either use BibTeX with the ACM-Reference-Format style,
+%% or BibLaTeX with the acmnumeric or acmauthoryear sytles, that include
+%% support for advanced citation of software artefact from the
+%% biblatex-software package, also separately available on CTAN.
+%%
+%% Look at the sample-*-biblatex.tex files for templates showcasing
+%% the biblatex styles.
+%%
+%%
+%% The majority of ACM publications use numbered citations and
+%% references.  The command \citestyle{authoryear} switches to the
+%% "author year" style.
+%%
+%% If you are preparing content for an event
+%% sponsored by ACM SIGGRAPH, you must use the "author year" style of
+%% citations and references.
+%% Uncommenting
+%% the next command will enable that style.
+%%\citestyle{acmauthoryear}
+
+\emergencystretch=2em
+
+%%
+%% end of the preamble, start of the body of the document source.
+\begin{document}
+
+%%
+%% The "title" command has an optional parameter,
+%% allowing the author to define a "short title" to be used in page headers.
+\title{Optimizing page cache policy for a Heterogeneous Storage setup via \texttt{cache\_ext}}
+
+%%
+%% The "author" command and its associated commands are used to define
+%% the authors and their affiliations.
+%% Of note is the shared affiliation of the first two authors, and the
+%% "authornote" and "authornotemark" commands
+%% used to denote shared contribution to the research.
+\author{Arjun Anil, & Aidan Liaw, & Sayali Kulkarni}
+\email{aanil3@wisc.edu, & aidan.liaw@student.uq.edu.au, & sskulkarni34@wisc.edu}
+
+%%
+%% By default, the full list of authors will be used in the page
+%% headers. Often, this list is too long, and will overlap
+%% other information printed in the page headers. This command allows
+%% the author to define a more concise list
+%% of authors' names for this purpose.
+\renewcommand{\shortauthors}{Anil et al.}
+
+%%
+%% The abstract is a short summary of the work to be presented in the
+%% article.
+% \begin{abstract}
+%   The POSIX anonymous \texttt{pipe()} (referred to as pipe henceforth) inter-process communication (IPC) method is a common way to send data between parent and child. This is because of its simple setup semantics (when using \texttt{fork}), built-in synchronisation, and automatic resource management. It performance however, is often overlooked. In doing so we explore the rabbit hole of performance profiling in Linux via the \texttt{perf}, \texttt{strace}, and \texttt{ftrace} functions, and ultimately conclude that [WRITE CONCLUSION.]
+% \end{abstract}
+
+%%
+%% The code below is generated by the tool at http://dl.acm.org/ccs.cfm.
+%% Please copy and paste the code instead of the example below.
+%%
+
+%%
+%% Keywords. The author(s) should pick words that accurately describe
+%% the work being presented. Separate the keywords with commas.
+
+%%
+%% This command processes the author and affiliation and title
+%% information and builds the first part of the formatted document.
+\maketitle
+
+
+% \section{Introduction}
+
+
+% \section{Experiment}
+
+% \subsection{Variables}
+
+
+% \subsection{Apparatus}
+
+% \begin{figure}[t]
+%     \centering
+%     \includegraphics[width=\columnwidth]{latency_throughput.png}
+%     \caption{Minimum one-way latency (left axis) and best throughput (right axis) versus transfer size; dotted lines mark \texttt{PIPE\_BUF} and the pipe capacity.}
+%     \label{fig:lat-tp}
+%     \Description{Latency and throughput against message size on two logarithmic axes.}
+% \end{figure}
+
+
+% Figure~\ref{fig:lat-tp} shows that a small message takes about 1\,$\mu$s one way (0.98\,$\mu$s at 4B), stepping up to 2.12\,$\mu$s at 4KB, and beyond the pipe capacity latency is roughly proportional to the size (113.9\,$\mu$s at 512KB). Throughput rises from 21\,MiB/s (4B) to a peak of 4,742\,MiB/s at 16KB, is 25\% lower at 64KB (3,578\,MiB/s) and stays there up to 512KB. The minima reproduced to within 0.9--9.7\% (latency) and 5.8--14\% (throughput, chunks of 1KB and larger; 29--39\% for 4B and 16B) across five runs.
+
+\section{Currrent Policy Work}
+
+As AI applications drive memory demand and outpace growth in supply, many live storage solutions from DRAM down to HDDs have increased in price from 2026 onwards \cite{memory_prices}. This has caused adopting a prudent outlook for RAM usage both in terms of \textit{percentage used} and \textit{pages resident}.
+
+% This problem has become widespread to the point where discussions of an "IO wall" for HDDs (the cheapest of the live secondary storage solutions) has now motivated research into optimising HDD storage \cite{declarativeio}.
+
+% Simultaneously, SSD solutions have trended to lower performance solutions. By increasing the amount of state a given NAND cell stores, progressing from single-level cell (SLC, holding \(2^1 = 2\) states) NAND up to proposed penta-level cell (PLC, holding \(2^5 = 32\) states) NAND, newer NAND solutions enable higher density storage, but sacrifice performance (a key characteristic of SSDs over HDDs) and critically write endurance \cite{qlc}.
+
+% Additionally, with different mediums of secondary storage available, from Hard Disk Drives (HDDs) to Solid State Drives (SSDs) to Storage Attached Networks (SANs), has caused the . 
+
+It is also worth noting performance disparities in a \textit{class} of secondary storage. For example, SSD solutions have trended to lower performance solutions via increasing the state stored by NAND cells, moving from single-level cell up to proposed penta-level cell. These newer cell solutions enable higher density storage, but sacrifice performance and write endurance \cite{qlc}.
+
+We would like to point out that heterogeneous storage solutions differ from tiered storage solutions. Heterogeneous solutions can be defined as appearing as a single storage mechanism, and how this mechanism performs. By contrast, tiered solutions can be defined as a policy on data placement.
+
+Considering the heterogeneous nature of secondary storage, in performance, a page cache policy that treats files from two different \textit{types} of disks will not be able to optimise for performance gaps. It is "cheaper", latency-wise, to fault in a page from a faster disk compared to a slower one.
+
+\section{Evaluation and Methodology}
+
+% Until prices stabilise or fall, new solutions in secondary storage are needed to provide equivalent performance on lower performance devices to keep costs down. This however, requires new software solutions to form.
+
+Software solutions have largely assumed that all storage behaves alike. The Linux page cache, the main layer that hides storage latency from applications. evicts pages by recency and frequency alone, treating every page as equally costly to lose \cite{multigenlru}. On a host with both an SSD and an HDD, re-reading an evicted HDD page takes roughly 50-100 times longer than an SSD page \cite{ssdvshdd}. The kernel thus minimises the number of misses rather than time applications spend waiting on them, and on mixed-device hosts it routinely trades a cheap SSD miss for an expensive HDD one.
+
+This idea is not new: Forney et. al ~\cite{forney} proposed storage-aware caching in 2002, but evaluated it only in simulation, and Meta's TMO~\cite{tmo} showed that reclaim decisions depends on the backing device's performance. Additionally, research on heterogeneous storage solutions, have demonstrated that mixed SSD and SSD + HDD solutions may yield higher performance metrics. For example, Takai et al. \cite{heterogeneousssd} have demonstrated that SSD cell type mixtures can enable higher IOPS/cost under specific workloads.
+
+% One existing software solution is \texttt{cache\_ext}, a patched v6.6.8 Linux kernel that enables page caching customisation via the extended Berkley Packet Filter (eBPF) \cite{cacheext}. Its main benefit is that it enables cache policy customisation without Linux kernel code modification.
+
+An existing customisability solution for the Linux page cache is \texttt{cache\_ext}, a patched v6.6.8 kernel \cite{cacheext}. It enables page cache policy customisation without kernel code modification via the extended Berkley Packet Filter (eBPF) interface. We aim to use eBPF to show how a cache policy accommodating heterogeneity might be beneficial for performance.
+
+% This motivates us to merge these two ideas to recreate the performance benefits of existing heterogeneous storage solutions with the flexibility of eBPF.
+
+\section{Criticisms and Next Steps}
+
+Our plan involves the following:
+
+\begin{enumerate}[label=(\arabic*), leftmargin=2.0em, labelsep=0.3em]
+    \item \textbf{Setup and Baselines.} Build and boot a kernel with \texttt{cache\_ext}, and reproduce its baseline policies (default LRU, MGLRU, and the sample policies provided by the authors) to validate our environment.
+
+    % \item \textbf{Heterogeneous storage testbed.} Configure a system with at least two storage devices of differing performance, for example a fast NVMe SSD and a slower QLC device. If real QLC hardware is unavailable, we will emulate the slower device by adding latency or throttling bandwidth through a \texttt{shim}.
+
+    \item \textbf{Heterogeneous storage testbed.} Configure a system with at least two storage devices of differing performance. If real hardware is unavailable, we will emulate the slower device by adding latency or throttling bandwidth through a \texttt{shim}.
+
+
+    \item \textbf{Storage-aware eviction policy.} Implement an eBPF policy in \texttt{cache\_ext} that tracks cached page to devices and weighs eviction decisions by the cost of a future miss on that device. We will start by exploring Forney et al.'s partition-based approach which divides the cache per device and resizes partitions to balance the work across devices, and compare it against a simpler cost-weighted variant of LRU.
+
+\end{enumerate}
+
+\section{Proposed Evaluation Methodology}
+
+We will be comparing our policy against the baselines on file-system microbenchmarks (fio) and application workloads such as key-value store. We will measure throughput, tail latency, per-device miss counts, and the amount of DRAM needed to reach a target level of performance, which ties the results back to the cost argument behind TMO.
+
+The exact workload characteristics needs to be pinned down by literature review (for example, whether the GET-SCAN workload that \texttt{cache\_ext} uses be an option).
+
+\section{Resources Required}
+
+\texttt{cache\_ext} is a patched Linux kernel (v6.6.8), so we need root access and the ability to boot a custom kernel on a machine with both an SSD and an HDD, most likely using the bootloader \texttt{grub}.
+
+\begin{itemize}[
+    leftmargin=2.0em,
+    labelsep=0.3em,
+    topsep=1pt,
+    itemsep=0pt,
+    parsep=0pt
+]
+    \item \textbf{Hardware:} CloudLab Wisconsin bare-metal nodes, which pair HDDs with an SSD in one machine. 
+    \item \textbf{Software:} the \texttt{cache\_ext} kernel and sample policies, clang/libbpf/bpftool, cgroup-v2 for limiting memory and reading I/O pressure. 
+    % [NEED TO DECIDE ON THE WORKLOADS] -> mentioned in the proposed evaluation methodology section.
+\end{itemize}
+
+\section{AI Usage}
+
+It is our plan to involve AI in our project. We will use AI for the implementation of our proposed policy. Our AI usage will follow closely with the AI policy of CS736. Critically, we will not use AI for idea generation, \textcolor{blue}{\href{https://dictionary.cambridge.org/us/dictionary/english/waffling}{writing}} (except making LaTeX .bib citations) or presentation creation.
+
+
+\section{Overleaf link}
+For reference, our LaTeX source can be found below.
+\newline
+% \textcolor{blue}{\url{https://www.overleaf.com/read/nrhbnrgdhdzh#16effe}}
+
+\clearpage
+
+\clearpage
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{sample-base}
+
+\end{document}
+\endinput
