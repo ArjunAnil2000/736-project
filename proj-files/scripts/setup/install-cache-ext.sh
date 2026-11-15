@@ -1,10 +1,10 @@
 #!/bin/bash
-# install-kernel.sh - Build, install and boot the cache_ext kernel on a node.
+# install-cache-ext.sh - Build, install and boot the cache_ext kernel on a node.
 #
 # Run this ON THE NODE, from a clone of this repo (e.g. ~/736-project):
 #
 #   git clone https://github.com/ArjunAnil2000/736-project ~/736-project
-#   ~/736-project/proj-files/scripts/setup/install-kernel.sh
+#   ~/736-project/proj-files/scripts/setup/install-cache-ext.sh
 #
 # The kernel build takes a long time; run it inside tmux/screen so an SSH
 # drop doesn't kill it. Output is also appended to ~/install-kernel.log.
@@ -40,6 +40,10 @@ set -euo pipefail
 KERNEL_TAG="6.6.8-cache-ext+"
 GRUB_ENTRY="Advanced options for Ubuntu>Ubuntu, with Linux ${KERNEL_TAG}"
 MIN_FREE_GB=35
+# Modules localmodconfig must keep even if they aren't loaded right now
+# (names as lsmod prints them), and the config options they turn on.
+EXTRA_MODULES=(dm_mod dm_delay)
+REQUIRED_CONFIGS=(CONFIG_BLK_DEV_DM CONFIG_DM_DELAY CONFIG_EXT4_FS)
 LOG_FILE="$HOME/install-kernel.log"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -134,12 +138,44 @@ build_and_install_kernel() {
     # build.py builds with CC="ccache clang"; cache_ext's install_kernel.sh
     # doesn't install ccache, so make sure it's present.
     sudo apt-get install -y ccache
+
+    # install_kernel.sh runs `make localmodconfig`, which disables every
+    # module that isn't currently loaded. Modules we need later but that
+    # usually aren't loaded on a fresh node (dm-delay for the slow-disk
+    # emulation) would silently be left out. localmodconfig reads the module
+    # list from $LSMOD if set, so hand it lsmod's output plus our extras.
+    local lsmod_file m
+    lsmod_file=$(mktemp "${TMPDIR:-/tmp}/lsmod.XXXXXX")
+    {
+        lsmod
+        for m in "${EXTRA_MODULES[@]}"; do echo "$m 0 0"; done
+    } > "$lsmod_file"
+    log "localmodconfig will also keep: ${EXTRA_MODULES[*]}"
+
     # Auto-answer install_kernel.sh's interactive prompts: 1, Y, 1, N
     # (carried over unchanged from the mem-evolve setup, where this worked).
-    (cd "$CACHE_EXT_DIR" && printf '1\nY\n1\nN\n' | bash ./install_kernel.sh) \
+    (cd "$CACHE_EXT_DIR" && printf '1\nY\n1\nN\n' | LSMOD="$lsmod_file" bash ./install_kernel.sh) \
         || die "cache_ext install_kernel.sh failed"
+    rm -f "$lsmod_file"
     kernel_installed || die "Build finished but no '${KERNEL_TAG}' entry found in /boot/grub/grub.cfg"
+    check_kernel_config
     ok "cache_ext kernel installed"
+}
+
+# Warn (loudly, but don't fail: the kernel is already installed) if a config
+# option we depend on didn't make it into the built kernel.
+check_kernel_config() {
+    local cfg="$CACHE_EXT_DIR/linux/.config" opt missing=()
+    [[ -f "$cfg" ]] || { warn "No $cfg to check"; return; }
+    for opt in "${REQUIRED_CONFIGS[@]}"; do
+        grep -Eq "^${opt}=(y|m)$" "$cfg" || missing+=("$opt")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        warn "Built kernel is missing: ${missing[*]}"
+        warn "The disk/delay scripts may not work on it. Check EXTRA_MODULES in this script and re-run with --rebuild."
+    else
+        ok "Kernel config has: ${REQUIRED_CONFIGS[*]}"
+    fi
 }
 
 reboot_into_cache_ext() {
@@ -151,7 +187,7 @@ reboot_into_cache_ext() {
         exit 0
     fi
     log "Rebooting now. SSH back in once the node is up and re-run:"
-    log "    $SCRIPT_DIR/install-kernel.sh"
+    log "    $SCRIPT_DIR/install-cache-ext.sh"
     sudo reboot
     exit 0
 }
