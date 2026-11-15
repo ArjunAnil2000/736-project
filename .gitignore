@@ -1,0 +1,4 @@
+# Created on nodes by cache_ext's install_filesearch.sh / setup_isolation.sh
+# (they clone a v6.6 Linux tree into the parent of cache_ext/).
+proj-files/linux/
+proj-files/cgroup/
