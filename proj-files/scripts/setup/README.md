@@ -34,9 +34,22 @@ Hit Arjun up for this.
 
 # How to add dm-delay
 
-1. Run the `dm-delay` script -- `$REPO_ROOT/proj-files/scripts/setup/add-dm-delay-to-partition.sh`
+1. Run the `dm-delay` script
+    ```$REPO_ROOT/proj-files/scripts/setup/add-dm-delay-to-partition.sh --read-ms 5```
+
+To change the delay, simply re-run the above script with a different delay.
 
 > [!NOTE]
 > `dm-delay` quirk  
 > `dm-delay` does not persist with reboots. So if the host is rebooted, the `dm-delay` script will
 > need to be re-run.
+
+> [!WARNING]
+> `dm-delay` rounds delays up to timer ticks  
+> On the cache_ext kernel (v6.6.8), `dm-delay` measures delays in jiffies, not milliseconds. With
+> `CONFIG_HZ=250` a tick is 4 ms, so `--read-ms 5` is rounded up to 2 ticks (8 ms), and a timer +
+> workqueue hop adds a bit more on top. In practice `--read-ms 5` measured as ~10 ms extra latency
+> with fio (4.2 ms on `/mnt/fast` vs 14.2 ms on `/mnt/slow`, 4k random reads, `--direct=1`).
+> Check the tick rate with `grep '^CONFIG_HZ=' /boot/config-$(uname -r)`.
+> Always measure the actual latency with fio rather than relying on the configured value, and use
+> the measured numbers when reporting results or setting per-device costs in the policy.
