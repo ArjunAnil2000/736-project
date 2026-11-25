@@ -210,83 +210,84 @@
 
 % Figure~\ref{fig:lat-tp} shows that a small message takes about 1\,$\mu$s one way (0.98\,$\mu$s at 4B), stepping up to 2.12\,$\mu$s at 4KB, and beyond the pipe capacity latency is roughly proportional to the size (113.9\,$\mu$s at 512KB). Throughput rises from 21\,MiB/s (4B) to a peak of 4,742\,MiB/s at 16KB, is 25\% lower at 64KB (3,578\,MiB/s) and stays there up to 512KB. The minima reproduced to within 0.9--9.7\% (latency) and 5.8--14\% (throughput, chunks of 1KB and larger; 29--39\% for 4B and 16B) across five runs.
 
-\section{Currrent Policy Work}
+\section{Related Work}
+% This is to be removed in the end
+% \begin{itemize}
+%     \item cache-ext
+%     \item s3-fifo
+%     \item mglru
+%     \item XRP: bpf in nvme layer
+% \end{itemize}
 
-As AI applications drive memory demand and outpace growth in supply, many live storage solutions from DRAM down to HDDs have increased in price from 2026 onwards \cite{memory_prices}. This has caused adopting a prudent outlook for RAM usage both in terms of \textit{percentage used} and \textit{pages resident}.
+% \textbf{IMPORTANT: ADD THIS SOMEONE PLS, ELSE I CRY}. Para about cache ext and eBPF.
 
-% This problem has become widespread to the point where discussions of an "IO wall" for HDDs (the cheapest of the live secondary storage solutions) has now motivated research into optimising HDD storage \cite{declarativeio}.
+Changing how Linux evicts pages has traditionally meant modifying and rebuilding kernel's memory-management code, a slow process: MGLRU took years to be merged upstream. eBPF removes this barrier by letting small, verified programs run inside the kernel at defined hooks, with BPF maps sharing state with user space. It is increasingly used to replace kernel policies rather than just observe them, as in sched\_ext for CPU scheduling. For our project, it means a device-aware eviction policy can be written, loaded and compared against existing policies without maintaining a custom memory-management patch.
 
-% Simultaneously, SSD solutions have trended to lower performance solutions. By increasing the amount of state a given NAND cell stores, progressing from single-level cell (SLC, holding \(2^1 = 2\) states) NAND up to proposed penta-level cell (PLC, holding \(2^5 = 32\) states) NAND, newer NAND solutions enable higher density storage, but sacrifice performance (a key characteristic of SSDs over HDDs) and critically write endurance \cite{qlc}.
+cache\_ext \cite{cacheext} applies this idea to the page cache. Its modified Linux 6.6.8 kernel calls eBPF callbacks when folios are added, accessed and evicted, and when the kernel needs eviction candidates, so each cgroup can run its own eviction policy. Its authors implement eight policies and report up to 70\% higher throughput and 58\% lower tail latency than the default. Related frameworks make paging \cite{pageflex} and prefetching \cite{fetchbpf} programmable. None of these considers which device a cached page came from.
+A similar eBPF-based extension is XRP\cite{xrp}, which lets applications run custom eBPF functions in the NVMe driver to issue chains of dependent reads, such as B-tree lookups, without passing back through the kernel storage stack. However, XRP\cite{xrp} bypasses the page cache and targets only NVMe devices, as opposed to \texttt{cache\_ext}\cite{cacheext}.
 
-% Additionally, with different mediums of secondary storage available, from Hard Disk Drives (HDDs) to Solid State Drives (SSDs) to Storage Attached Networks (SANs), has caused the . 
+Existing policy work around page cache policies are Least-Recently-Used-(LRU)-like approximations that assume removing the least recently used page would prove beneficial. For example, the linux kernel uses MGLRU \cite{multigenlru}, which groups pages into generations by how recently they were accessed and uses a feedback controller that balances eviction according to page refault rate: it counts every refault the same, so a page re-read from a slow HDD weighs no more than a re-read from a fast SSD. Another example would be S3-FIFO \cite{s3fifo} that uses three simple FIFO queues -- it adds a ghost queue to identify recently evicted pages and give it a higher priority. Like MGLRU, S3-FIFO also minimizes the number of misses and does not take into account the cost of the miss. Both S3-FIFO and MGLRU are available as eBPF policies for \texttt{cache\_ext} and can be used as comparisons.
 
-It is also worth noting performance disparities in a \textit{class} of secondary storage. For example, SSD solutions have trended to lower performance solutions via increasing the state stored by NAND cells, moving from single-level cell up to proposed penta-level cell. These newer cell solutions enable higher density storage, but sacrifice performance and write endurance \cite{qlc}.
+Cost-aware caching is not new. GreedyDual \cite{greedydual} gives each cached object a credit equal to its miss cost and evicts the lowest-credit object. Forney et al. \cite{forney} applied this to file caches over heterogeneous devices. They partitioned the cache per device and resized partitions to balance work across devices. However, they evaluated it only in simulation, with devices whose performance differed far less than SSDs and HDDs do today.
 
-We would like to point out that heterogeneous storage solutions differ from tiered storage solutions. Heterogeneous solutions can be defined as appearing as a single storage mechanism, and how this mechanism performs. By contrast, tiered solutions can be defined as a policy on data placement.
+ Linux itself already weighs refaults by IO cost \cite{lrubalance}: since version 5.8, reclaim balances anonymous and file memory by their refault rates weighted by swappiness. That cost model, however, has one weight per LRU list, not per device, so file pages from an SSD and an HDD remain indistinguishable.
 
-Considering the heterogeneous nature of secondary storage, in performance, a page cache policy that treats files from two different \textit{types} of disks will not be able to optimise for performance gaps. It is "cheaper", latency-wise, to fault in a page from a faster disk compared to a slower one.
-
-\section{Evaluation and Methodology}
-
-% Until prices stabilise or fall, new solutions in secondary storage are needed to provide equivalent performance on lower performance devices to keep costs down. This however, requires new software solutions to form.
-
-Software solutions have largely assumed that all storage behaves alike. The Linux page cache, the main layer that hides storage latency from applications. evicts pages by recency and frequency alone, treating every page as equally costly to lose \cite{multigenlru}. On a host with both an SSD and an HDD, re-reading an evicted HDD page takes roughly 50-100 times longer than an SSD page \cite{ssdvshdd}. The kernel thus minimises the number of misses rather than time applications spend waiting on them, and on mixed-device hosts it routinely trades a cheap SSD miss for an expensive HDD one.
-
-This idea is not new: Forney et. al ~\cite{forney} proposed storage-aware caching in 2002, but evaluated it only in simulation, and Meta's TMO~\cite{tmo} showed that reclaim decisions depends on the backing device's performance. Additionally, research on heterogeneous storage solutions, have demonstrated that mixed SSD and SSD + HDD solutions may yield higher performance metrics. For example, Takai et al. \cite{heterogeneousssd} have demonstrated that SSD cell type mixtures can enable higher IOPS/cost under specific workloads.
-
-% One existing software solution is \texttt{cache\_ext}, a patched v6.6.8 Linux kernel that enables page caching customisation via the extended Berkley Packet Filter (eBPF) \cite{cacheext}. Its main benefit is that it enables cache policy customisation without Linux kernel code modification.
-
-An existing customisability solution for the Linux page cache is \texttt{cache\_ext}, a patched v6.6.8 kernel \cite{cacheext}. It enables page cache policy customisation without kernel code modification via the extended Berkley Packet Filter (eBPF) interface. We aim to use eBPF to show how a cache policy accommodating heterogeneity might be beneficial for performance.
-
-% This motivates us to merge these two ideas to recreate the performance benefits of existing heterogeneous storage solutions with the flexibility of eBPF.
-
-\section{Criticisms and Next Steps}
-
-Our plan involves the following:
-
-\begin{enumerate}[label=(\arabic*), leftmargin=2.0em, labelsep=0.3em]
-    \item \textbf{Setup and Baselines.} Build and boot a kernel with \texttt{cache\_ext}, and reproduce its baseline policies (default LRU, MGLRU, and the sample policies provided by the authors) to validate our environment.
-
-    % \item \textbf{Heterogeneous storage testbed.} Configure a system with at least two storage devices of differing performance, for example a fast NVMe SSD and a slower QLC device. If real QLC hardware is unavailable, we will emulate the slower device by adding latency or throttling bandwidth through a \texttt{shim}.
-
-    \item \textbf{Heterogeneous storage testbed.} Configure a system with at least two storage devices of differing performance. If real hardware is unavailable, we will emulate the slower device by adding latency or throttling bandwidth through a \texttt{shim}.
+% Separately, research on mixing different SSD NAND cell technologies continues at various levels, as packing exponentially more state per cell degrades characteristics surrounding performance and reliability. This creating a clear trade-off between the former characteristics against current (SLC, MLC, TLC, QLC) and projected (PLC) capacity per unit cost \cite{ssd_cell_characterised}. Transaction-level-modelling (TLM) simulations by Takai et al. demonstrate that optimal performance cost ratios exist for specific applications. Unfortunately the simulator remains closed-sourced, and the trace-based approach is infeasible under the proposed project.
 
 
-    \item \textbf{Storage-aware eviction policy.} Implement an eBPF policy in \texttt{cache\_ext} that tracks cached page to devices and weighs eviction decisions by the cost of a future miss on that device. We will start by exploring Forney et al.'s partition-based approach which divides the cache per device and resizes partitions to balance the work across devices, and compare it against a simpler cost-weighted variant of LRU.
 
-\end{enumerate}
+\section{Evaluation methodologies}
 
-\section{Proposed Evaluation Methodology}
+% This is to be removed in the end
+% \begin{itemize}
+%     \item cache-ext workloads
+%     \item fio
+%     \item dm-delay
+%     \item Lbench
+%     \item storage shims
+% \end{itemize}
 
-We will be comparing our policy against the baselines on file-system microbenchmarks (fio) and application workloads such as key-value store. We will measure throughput, tail latency, per-device miss counts, and the amount of DRAM needed to reach a target level of performance, which ties the results back to the cost argument behind TMO.
+We will use cache\_ext's own workloads as a starting point, including its modified LevelDB driven by YCSB. Alongside these we will run fio microbenchmarks that re-read files placed on each device. Each workload runs in a cgroup whose memory.max is a fraction of its working set, which forces eviction.
 
-The exact workload characteristics needs to be pinned down by literature review (for example, whether the GET-SCAN workload that \texttt{cache\_ext} uses be an option).
+Where real HDD+SSD hosts are unavailable, or to sweep the latency gap in a controlled way, we emulate a slow device. dm-delay adds a fixed, millisecond-granularity delay to every I/O on an existing device. null\_blk is a memory-backed block device whose completion latency can be set in nanoseconds.
 
-\section{Resources Required}
+If we can reserve a host that has the heterogeneous device configuration (like a HDD), using Disk Mimic will allow us to characterise the HDD for us to simulate it later on in our tests \cite{disk_mimic}.
+% If a HDD is temporarily accessible, using Disk Mimic will allow us to characterise the HDD for us to simulate it later on in our tests \cite{disk_mimic}.
+However, Disk Mimic only simulates the I/O scheduling (which we reason would model realistic HDD delay), meaning that we would need to expose a block I/O interface. While the code behind the project is closed source, the paper was written by UW-Madison, which motivates the potential to acquire the source code.
 
-\texttt{cache\_ext} is a patched Linux kernel (v6.6.8), so we need root access and the ability to boot a custom kernel on a machine with both an SSD and an HDD, most likely using the bootloader \texttt{grub}.
+% comparison
+As mentioned earlier, MGLRU\cite{multigenlru} and S3-FIFO\cite{s3fifo} can be used to compare against the custom policy written. Comparing against a run with no eBPF policy attached (linux default) is also planned. 
 
-\begin{itemize}[
-    leftmargin=2.0em,
-    labelsep=0.3em,
-    topsep=1pt,
-    itemsep=0pt,
-    parsep=0pt
-]
-    \item \textbf{Hardware:} CloudLab Wisconsin bare-metal nodes, which pair HDDs with an SSD in one machine. 
-    \item \textbf{Software:} the \texttt{cache\_ext} kernel and sample policies, clang/libbpf/bpftool, cgroup-v2 for limiting memory and reading I/O pressure. 
-    % [NEED TO DECIDE ON THE WORKLOADS] -> mentioned in the proposed evaluation methodology section.
-\end{itemize}
+% workload
 
-\section{AI Usage}
+% shim for heterogenuous devices 
 
-It is our plan to involve AI in our project. We will use AI for the implementation of our proposed policy. Our AI usage will follow closely with the AI policy of CS736. Critically, we will not use AI for idea generation, \textcolor{blue}{\href{https://dictionary.cambridge.org/us/dictionary/english/waffling}{writing}} (except making LaTeX .bib citations) or presentation creation.
+\section{Criticisms}
 
+% \section{Criticisms and next steps}
+% I dount we will get space for "next steps" so
+
+% This is to be removed in the end: 
+% \begin{itemize}
+%     \item TMO? Argue that refault rate is not the correct metric? PSI? -> ?
+%     \item Unstable foundations of eBPF based kernels -- https://dl.acm.org/doi/10.1145/3689031.3717497 -> done
+%     \item the use of a shim -> done
+% \end{itemize}
+
+Refault \emph{count}, the signal behind both MGLRU and S3-FIFO, may be the wrong objective on heterogeneous hosts. Meta's TMO~\cite{tmo} argues that a fixed refault or promotion-rate target is flawed because its cost depends on the backing device, and instead uses Pressure Stall Information (PSI) to measure the time lost to resource shortage. We will therefore report PSI I/O stall time alongside miss ratio.
+
+
+% shim
+It is well known that the use of shims does not accurately capture the characteristics of a device. For example, adding a shim to the device to emulate an HDD device penalises all IO equally, as opposed to positioning time that would vary the performance of different requests in different manners. This is a limitation this project has due to the lack of specialised hardware.
+
+% bpf problems.
+Additionally, recent work by Zhong et al. \cite{depsurf} on the foundations of eBPF-based kernel extensions has shown how changes in the kernel’s dependency surface have caused eBPF programs to fail silently or work incorrectly. These mismatches come from source code changes, configuration options and compiler inlining. The page cache is a clear example: the folio change in v5.16 renamed hundreds of functions, and the kfuncs \texttt{cache\_ext} relies on have no stable interface, so our policy is tied to \texttt{cache\_ext}’s v6.6.8 kernel.
 
 \section{Overleaf link}
 For reference, our LaTeX source can be found below.
 \newline
-% \textcolor{blue}{\url{https://www.overleaf.com/read/nrhbnrgdhdzh#16effe}}
+% Change this
+\textcolor{blue}{\url{https://www.overleaf.com/project/6ae13fc8a1339e0b76926bb6/share#1a77ecb317f99170a71cd8b160bf1514e5c2046a2d49ac86}}
 
 \clearpage
 
