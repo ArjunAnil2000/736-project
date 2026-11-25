@@ -209,6 +209,8 @@
 
 % Figure~\ref{fig:lat-tp} shows that a small message takes about 1\,$\mu$s one way (0.98\,$\mu$s at 4B), stepping up to 2.12\,$\mu$s at 4KB, and beyond the pipe capacity latency is roughly proportional to the size (113.9\,$\mu$s at 512KB). Throughput rises from 21\,MiB/s (4B) to a peak of 4,742\,MiB/s at 16KB, is 25\% lower at 64KB (3,578\,MiB/s) and stays there up to 512KB. The minima reproduced to within 0.9--9.7\% (latency) and 5.8--14\% (throughput, chunks of 1KB and larger; 29--39\% for 4B and 16B) across five runs.
 
+\providecommand{\tbd}[1]{\textcolor{red}{[#1]}}
+
 \section{Introduction}
 
 % Background summary.
@@ -245,7 +247,9 @@ Additionally, we predict that: \textbf{A page cache policy that treats files fro
 
 In the context of heterogeneous storage, this discussion concerns the combination of SSDs and HDDs, which will be briefly summarised.
 
-HDDs in general have a lower cost per unit of storage capacity due to their lower manufacturing cost, whereas SSDs have lower access latencies and higher I/O throughput, especially for random accesses whereby the burden of mechanical movement is nonexistent \cite{arch, tcostorage}. However, in addition to higher costs at lower capacities, they suffer from write endurance (and depending on the technology read endurance too) \cite{arch, tcostorage, heterogeneousssd}.
+HDDs in general have a lower cost per unit of storage capacity due to their lower manufacturing cost, whereas SSDs have lower access latencies and higher I/O throughput, especially for random accesses whereby the burden of mechanical movement is nonexistent \cite{arch, tcostorage}. However, in addition to higher costs at lower capacities, they suffer from write endurance (and depending on the technology read endurance too) \cite{arch, tcostorage, heterogeneousssd}. 
+
+Additionally, these properties are not fixed for a device class. Wu et al.\cite{orthus} show that on modern devices the storage \textit{hierarchy} is not strict: device performance can overlap and under load a saturated faster device can serve requests more slowly than the device beneath it. The cost of reading a page is therefore a function of both the device and it's current load, not of the device type alone.
 
 From a page caching perspective however, this heterogeneity means that the cost of both page admission and eviction is dependent on the backing storage device \cite{forney, arch}.
 
@@ -257,7 +261,7 @@ To clarify, the term page and folio are used
 
 Software solutions have largely assumed that all storage behaves alike. The Linux page cache, the main layer that hides storage latency from applications. evicts pages by recency and frequency alone, treating every page as equally costly to lose \cite{multigenlru}. On a host with both an SSD and an HDD, re-reading an evicted HDD page takes roughly 50-100 times longer than an SSD page \cite{ssdvshdd}. The kernel thus minimises the number of misses rather than time applications spend waiting on them, and on mixed-device hosts it routinely trades a cheap SSD miss for an expensive HDD one.
 
-This idea is not new: Forney et. al ~\cite{forney} proposed storage-aware caching in 2002, but evaluated it only in simulation, and Meta's TMO~\cite{tmo} showed that reclaim decisions depends on the backing device's performance. Additionally, research on heterogeneous storage solutions, have demonstrated that mixed SSD and SSD + HDD solutions may yield higher performance metrics. For example, Takai et al. \cite{heterogeneousssd} have demonstrated that SSD cell type mixtures can enable higher IOPS/cost under specific workloads.
+This idea is not new: Forney et. al ~\cite{forney} proposed storage-aware caching in 2002, but evaluated it only in simulation, and Meta's TMO~\cite{tmo} showed that reclaim decisions depends on the backing device's performance. Revisting this question in the era of NVMe and Optane devices, Wu et al.\cite{orthus} argue that the storage hierarchy is no longer a hierarchy and that caching layers which assume the cache device is always faster leave substantial performance unused, by upto $2\times$. Additionally, research on heterogeneous storage solutions, have demonstrated that mixed SSD and SSD + HDD solutions may yield higher performance metrics. For example, Takai et al. \cite{heterogeneousssd} have demonstrated that SSD cell type mixtures can enable higher IOPS/cost under specific workloads.
 
 % One existing software solution is \texttt{cache\_ext}, a patched v6.6.8 Linux kernel that enables page caching customisation via the extended Berkley Packet Filter (eBPF) \cite{cacheext}. Its main benefit is that it enables cache policy customisation without Linux kernel code modification.
 
@@ -271,7 +275,13 @@ An existing customisability solution for the Linux page cache is \texttt{cache\_
 
 % HDDs
 
-\subsection{Current Linux Paging Mechanisms and Policies}
+\subsection{Current Linux Page Eviction Policies}
+
+MGLRU
+
+S3-FIFO
+
+LRU with active, inactive list approximation
 
 \subsection{\cacheExt}
 
@@ -280,6 +290,10 @@ An existing customisability solution for the Linux page cache is \texttt{cache\_
 Apple's Fusion Drive offerings from 2012 to 2019
 
 Intel Optane Memory
+
+\textbf{Non-hierarchical caching.} The closest modern work to ours is Orthus\cite{orthus}, which, like Forney at al.\ \cite{forney} questions the assumption that caching layers sit in a strict performance hierarchy. Orthus introduces \textit{non-hierarchical caching} (NHC) for a fast storage device that caches a slower one. A feedback controller tunes two knobs: it stops admitting data into the cache once the cache already holds the hot set, and it redirects a fraction of hits on clean data to the capacity device so that both devices' bandwidth is used. It is implemented as a block-layer caching module (Orthus-CAS) and as a key-value store cache (Orthus-KV), and improves performance by up to $2\times$ over classic caching.
+
+\tbd{Candidate for cutting if space is not there}. Our setting differs in three ways. First, the page cache is in DRAM and both the SSD and the HDD are backing stores. Orthus caches between two storage devices. Second, our devices hold disjoint data: there are no redundant copies between the SSD and the HDD, so Orthus' central mechanism of redirecting hits to the other device does not apply. Third, the performance gap between a SATA SSD and an HDD is roughly two orders of magnitude, so the inversion that Orthus exploits, where the faster device becomes the bottle, is unlikely on our hardware setup. We therefore act on a different decision policy i.e \textit{which page to evict}, but share Orthus' principle that the right decision depends on device cost rather than on an assumed ordering of devices.
 
 \subsection{Hypothesis and Prediction}
 
@@ -290,11 +304,16 @@ Intel Optane Memory
 \subsection{Design Objectives}
 
 % Policies here
-\subsection{Policy Architectures}
+\subsection{Proposed policies}
+% \subsection{Storage-Awareness Integration}
+% \subsection{Predicted Trade-Offs}
+% Better if these headsing are coalesced together
 
-\subsection{Storage-Awareness Integration}
+Talk about the following for each:
+- Policy arch
+- How is the storage-awareness part included
+- Predicted trade-offs
 
-\subsection{Predicted Trade-Offs}
 
 \section{Implementation}
 
@@ -312,27 +331,114 @@ Intel Optane Memory
     % [NEED TO DECIDE ON THE WORKLOADS] -> mentioned in the proposed evaluation methodology section.
 \end{itemize}
 
+ 
 \section{Experimental Setup and Methodology}
-
-\subsection{Platform}
-
-\subsubsection{Storage Devices}
-
-\subsection{Baselines and Workloads}
-
-\subsection{Metrics and Experimental Procedure}
-
+\label{sec:setup}
+ 
+\subsection{Testbed}
+ 
+We use a CloudLab bare-metal node with 2 CPU cores and 2\,GB of RAM, running the \cacheExt{} kernel (Linux 6.6.8). A node with both an SSD and an HDD was not available in time for these experiments, so we emulate a slower device. A single physical disk is split into two partitions, each formatted with ext4. The first is used directly as the \emph{fast} device. The second is placed behind Linux's \texttt{dm-delay} device-mapper target, configured with a 5\,ms delay on reads and writes, and serves as the \emph{slow} device. Because \texttt{dm-delay} works in kernel timer ticks, the effective delay differs from the configured value, so we report measured latencies: under our synthetic workload, reads that reached the disk took 18\,ms on average on the fast device and 29\,ms on the slow device, a ratio of about 1.6. Both partitions share one physical disk, which we believe to be a hard drive. \tbd{Arjun: confirm the disk model and the node type, and add the second node (SSD + HDD) once results from it are available.}
+ 
+\subsection{Workloads}
+ 
+\subsubsection{Synthetic Two-Device Microbenchmark}
+ 
+We use fio~\cite{fio} with eight threads issuing 4\,KB random reads through the page cache (\texttt{psync}, buffered I/O). The workload reads two 512\,MB files, one on each device. Each read chooses one of the two files uniformly at random, so both files receive the same number of requests, and chooses an offset within that file from a Zipfian distribution with $\theta = 0.9$. All threads share a single hot set. Each thread issues its next read only when the previous one completes. The workload therefore models a single application that depends equally on data stored on two devices of different speeds, and it isolates one variable: the two files are equally popular, so any difference in how a policy treats them comes from the device they are stored on.
+ 
+\subsubsection{Production Block I/O Traces}
+ 
+To evaluate policies on realistic access patterns, we will replay two public production traces:
+ 
+\begin{itemize}[leftmargin=1.5em, topsep=2pt, itemsep=1pt]
+    \item \textbf{Meta Tectonic (Baleen)}~\cite{baleen}. Anonymised requests from Meta's production bulk storage system (Tectonic), recorded at a CacheLib flash cache placed in front of it. Seven traces are provided, each sampled by block ID from a different storage cluster, and each request records a block ID, byte offset, I/O size, timestamp and operation. Down-sampled versions (0.1\% and 1\%) are provided, each intended to be used with a cache of the same relative size.
+    \item \textbf{Alibaba Cloud block traces}~\cite{alibabatraces}. All I/O to 1{,}000 virtual disks, randomly sampled from a production elastic block storage cluster, over January 2020. Each record contains a disk ID, read/write flag, byte offset, length and timestamp. The full trace is 181\,GB compressed and 751\,GB uncompressed, so we will use a subset of disks and a time window.
+\end{itemize}
+ 
+\textbf{Replay.} We will convert the read requests of each trace into fio's I/O log format and replay them with fio through the page cache (buffered I/O) in a single cgroup, so that the same harness, memory limits and metrics apply as for the synthetic workload. Each trace volume (a Tectonic block or an Alibaba virtual disk) is mapped to a file, and the files are placed on the fast and slow devices. \tbd{Decide: (a) how volumes are assigned to devices, e.g.\ randomly, by access frequency (hot data on the fast or the slow device), or by size; (b) whether to replay writes; (c) whether to replay at the recorded timestamps or as fast as possible; (d) which subset and time window to use, and how offsets are scaled to fit the node's disk and memory.} Because both traces were recorded below a cache in the original system (the Baleen traces at a flash cache in front of HDDs, the Alibaba traces at the block device of each virtual disk, below the guest's page cache), part of the original reuse has already been absorbed upstream; we expect lower hit rates than with the synthetic workload and will report them.
+ 
+\subsection{Memory Limit}
+ 
+Each workload runs in one cgroup v2 whose \texttt{memory.max} limits its page cache, with swap disabled. For the synthetic workload we use 64, 128 and 256\,MB, between one sixteenth and one quarter of the 1\,GB of data, so the policy must continually choose which pages to evict. \tbd{Memory limits for the trace replays, chosen relative to each trace's footprint.} Because a \cacheExt{} policy is attached per cgroup, the pages of both devices are managed by the same policy.
+ 
+\subsection{Procedure}
+ 
+For each policy and memory limit we:
+\begin{enumerate}[leftmargin=1.5em, topsep=2pt, itemsep=1pt]
+    \item drop the page cache;
+    \item create the cgroup and, for \cacheExt{} policies, load the policy;
+    \item fill the cache by reading \texttt{memory.max} worth of data with sequential 1\,MB reads, alternating 8\,MB chunks between the two files, so that the cache is full and eviction begins immediately without favouring either file;
+    \item run the workload for 240\,s without measuring, so that the cache contents reflect the policy rather than the initial fill (at the measured rate of about 340 misses per second, this replaces even the 256\,MB cache at least once);
+    \item run the workload for 30\,s and measure.
+\end{enumerate}
+The cgroup's name must begin with \texttt{cache\_ext}: the \cacheExt{} kernel enables the policy hooks only for such cgroups. In any other cgroup the policy's \texttt{init} hook runs but its page-level hooks are never called, and the kernel's default policy evicts all pages. We verify every policy run by enabling BPF run-time statistics and checking that the run counts of \texttt{folio\_added}, \texttt{folio\_accessed} and \texttt{evict\_folios} increase during the run. We report one run per configuration. \tbd{Increase to at least three runs per configuration for the final report.}
+ 
+\subsection{Metrics}
+ 
+From fio we record throughput (IOPS) and tail latency (p99). From \texttt{/proc/diskstats} we record, for each device, the number of reads that reached the device (page cache misses) and the time spent on them, from which we compute the average read latency. After each run we record the fraction of each file resident in the page cache using \texttt{mincore}. Cache hits are computed as fio reads minus device reads.
+ 
+We check each run for validity: the cgroup was 86--97\% full at the start of measurement, so eviction was taking place; every device read transferred exactly 4\,KB, so read-ahead did not bring in additional pages; and the node was otherwise idle, since \texttt{/proc/diskstats} counts I/O from all processes.
+ 
+\subsection{Policies}
+ 
+We compare the default kernel policy (classic two-list LRU, with MGLRU disabled), MGLRU, and the two-list biased LRU (one LRU list per device; each eviction request is served from the fast device's list with probability 0.75, falling back to the other list if needed). As a check that \cacheExt{} policies take effect on our testbed, we also ran the \cacheExt{} MRU policy at 64\,MB, with a 120\,s warm-up. \tbd{Add the cost-aware policy once implemented.}
+ 
 \section{Evaluation}
+\label{sec:eval}
+ 
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{hetero_fio_policies.png}
+    \caption{Synthetic workload. Left: throughput of each policy, with the change relative to the default policy. Right: share of cached pages that belong to the slow device's file at the end of each run.}
+    \label{fig:policies}
+    \Description{Two grouped bar charts over memory limits of 64, 128 and 256 MB. Left: IOPS for default, MGLRU and the two-list LRU; the two-list LRU is 24 and 28 percent lower at 64 and 128 MB and 4 percent lower at 256 MB. Right: default and MGLRU hold 50 percent slow-file pages; the two-list LRU holds 98, 99 and 81 percent.}
+\end{figure*}
+ 
+\begin{table}[t]
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{rrrrr}
+    \toprule
+    Limit & Default & MGLRU & Two-list & Slow \\
+    \midrule
+    64\,MB  & 683  & 723 (+6\%)  & 517 ($-$24\%)  & 98\% \\
+    128\,MB & 901  & 911 (+1\%)  & 647 ($-$28\%)  & 99\% \\
+    256\,MB & 1255 & 1245 ($-$1\%) & 1205 ($-$4\%) & 81\% \\
+    \bottomrule
+  \end{tabular}
+  \caption{Synthetic workload: throughput (IOPS) by policy and cgroup memory limit. \emph{Slow} is the share of cached pages belonging to the slow file under the two-list LRU (50\% for the default and MGLRU).}
+  \label{tab:results}
+\end{table}
+ 
+\subsection{Existing Policies Ignore the Device}
+ 
+Under both the default policy and MGLRU, the two files are cached equally at every memory limit (3.6\%, 8.8\% and 21.5\% of each file at 64, 128 and 256\,MB for the default policy), and the two devices see almost the same number of misses (about 5{,}100 each in 30\,s). The two policies also perform almost identically: MGLRU is within 6\% of the default at every size (Table~\ref{tab:results}). Throughput rises with the memory limit, from 683 to 1255 IOPS for the default policy, as the hit rate rises from 50\% to 73\%.
+ 
+Because a miss on the slow device costs about 1.6 times as much as a miss on the fast device, this even split is not even in cost. With the default policy, the slow device accounts for 61--62\% of the total disk read time while receiving half of the misses.
+ 
+\subsection{A Fixed Bias Reduces Throughput}
+ 
+The two-list LRU changes how the cache is divided as intended: the slow file's pages make up 98\%, 99\% and 81\% of the cached pages at 64, 128 and 256\,MB (Figure~\ref{fig:policies}, right), and reads that reach the disk shift from an even split to roughly two fast-device reads for every slow-device read. However, throughput falls by 24\% and 28\% at 64 and 128\,MB and by 4\% at 256\,MB (Figure~\ref{fig:policies}, left), and p99 latency rises from 64--68\,ms to 82--87\,ms at the two smaller sizes.
+ 
+The cause is lost hits. At 64\,MB the fast file keeps only about 0.4\,MB (about 100 pages) in the cache, compared with 18\,MB under the default policy, even though it receives half of all reads. Hits in 30\,s fall from 10{,}273 to 4{,}749 (a hit rate of 31\% instead of 50\%), while the number of misses barely changes (10{,}247 versus 10{,}786). At 128\,MB hits fall from 16{,}928 to 8{,}030. The policy evicts the fast file's most frequently used pages in order to keep slow-file pages that are used less often, because the biased coin chooses which list to evict from regardless of how recently the pages in that list were used. When the fast list holds only about a hundred pages, its least recently used page was typically accessed moments earlier.
+ 
+The disk is saturated in every configuration: it completes about 340--380 misses per second regardless of the policy, and the eight threads spend almost all of their time waiting on it, so the fast and slow read times add up to about 240\,s per 30\,s run (eight threads $\times$ 30\,s) under every policy. In this regime throughput is determined by the hit rate, and a policy that reduces hits reduces throughput even if it moves misses to the faster device. With 256\,MB of cache, the fast file keeps 8\% of its pages resident and the loss shrinks to 4\%.
+ 
+Sharing one disk also affects per-device latency: under the two-list LRU, reads on the fast device became faster (13--15\,ms) and reads on the slow device slower (36--43\,ms), as the mix of requests at the disk changed.
+ 
+\subsection{Sanity Check}
+ 
+The \cacheExt{} MRU policy, which evicts the most recently used pages, achieves 365 IOPS at 64\,MB compared with 683 for the default, and its hooks were invoked tens of thousands of times during the run, confirming that \cacheExt{} policies control eviction on our testbed. Runs made in a cgroup without the \texttt{cache\_ext} prefix matched the default policy exactly and are excluded.
+ 
+\subsection{Trace-Driven Evaluation}
+ 
+\tbd{Results of replaying the Baleen and Alibaba traces (Section~\ref{sec:setup}): throughput, hit rate and per-device misses for each policy and memory limit. Not yet run.}
+ 
+\subsection{Summary}
+ 
+On the synthetic workload, the default policy and MGLRU divide the cache evenly between the fast and slow devices, so the slow device dominates disk read time. A fixed bias towards keeping slow-device pages corrects the division but discards frequently used fast-device pages and lowers throughput by up to 28\%. These results are from an emulated slow device only about 1.6 times slower than the fast one, with both on the same disk; with a real SSD and HDD, the benefit of keeping slow-device pages should be much larger.
+ 
 
-\subsection{Overall Performance and Overheads}
-
-\subsection{Sensitivity Analysis}
-
-\subsubsection{[INSERT METRIC/PARAMETER/CHARACTERISTIC]}
-
-\subsubsection{[INSERT METRIC/PARAMETER/CHARACTERISTIC]}
-
-\subsubsection{Something Something policy[INSERT METRIC/PARAMETER/CHARACTERISTIC]}
 
 \section{Discussion}
 
@@ -344,6 +450,7 @@ Intel Optane Memory
 
 \subsubsection{Future Work}
 
+\textbf{Load-adaptive cost.} Orthus \cite{orthus} uses a feedback driven design to adapt to dynamically changing loads. We can measure per-device miss latency in eBPF from the block-layer tracepoints and use it to update the parameter the policy uses (like the break-even-interval ratio for the five-minute rule policy). 
 
 \section{Conclusion}
 
@@ -420,9 +527,6 @@ For reference, our LaTeX source can be found below.
 \newline
 % \textcolor{blue}{\url{https://www.overleaf.com/read/nrhbnrgdhdzh#16effe}}
 
-\clearpage
-
-\clearpage
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{sample-base}
 
