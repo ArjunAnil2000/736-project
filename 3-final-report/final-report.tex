@@ -58,10 +58,24 @@
     heightrounded=false
 }
 
+\settopmatter{printfolios=true}
+
 \newcommand{\cacheExt}{\texttt{cache\_ext}}
 
 \usepackage{xcolor}
 \usepackage{enumitem}
+\usepackage{tabularx}
+
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=blue,      
+    urlcolor=blue,
+    citecolor=blue
+}
+
+
 
 %%
 %% \BibTeX command to typeset BibTeX logo in the docs
@@ -170,7 +184,7 @@
 %% The abstract is a short summary of the work to be presented in the
 %% article.
 \begin{abstract}
-  The emergence of \cacheExt has arose a variety of experiments on page cache policies, via it's ability to modify such policies without modifications to the Linux kernel. This has motivated us to re-explore past research into heterogeneous storage caching policies, under modern storage devices, and modern homogeneous cache policies, adapted for heterogeneous storage systems. We see that under [POLICIES] that [RESULTS], and conclude that [CONCLUSION].
+The Linux page cache evicts pages by recency and frequency alone, so on hosts with fast and slow storage it minimises the number of misses rather than the time spent waiting on them. Using \cacheExt{}, which expresses eviction policies as eBPF programs, we design four device-aware policies: a two-list LRU with a fixed eviction bias, and device-aware extensions of \cacheExt{}'s MGLRU, S3-FIFO and sampled-eviction policies. On a testbed emulating a slower device, the default policy and MGLRU split the cache evenly between devices, so the slow device takes about 61\% of disk read time. A fixed bias corrects the split but evicts the fast device's frequently used pages, reducing throughput by up to 28\%. A storage-aware policy must therefore weigh the cost of a miss against how likely a page is to be reused. \tbd{Update with results for the remaining policies and the SSD+HDD node.}
 \end{abstract}
 
 %%
@@ -217,25 +231,23 @@
 
 As AI applications drive memory demand and outpace growth in supply, many live storage solutions from DRAM down to HDDs have increased in price from 2026 onwards \cite{memory_prices}. This has caused adopting a prudent outlook for RAM usage both in terms of \textit{percentage used} and \textit{pages resident}.
 
-This price rise has motivated data centres to increase the deployment of SSDs and HDDs \cite{tcostorage, ssdhddmarket}, and ongoing research into best optimising their combined usage \cite{tcostorage, declarativeio, heterogeneousssd}. Recent research has sought to use heterogeneous storage for cost optimisation and dataset placement \cite{tcostorage}, reduce redundant storage I/O 
+This price rise has motivated data centres to increase the deployment of SSDs and HDDs \cite{tcostorage, ssdhddmarket}, and ongoing research into best optimising their combined usage \cite{tcostorage, heterogeneousssd}. Recent research has sought to use heterogeneous storage for cost optimisation via dataset placement \cite{tcostorage}, and exploring what combinations of non-volatile technologies optimise best for specific workloads and metrics.
 
 % Current policy work.
 
 Specific to page cache policy, such research begun with Forney et al. \cite{Forney}, which identified that "storage-aware" cache policies demonstrate performance benefits via simulating ageing (varying performance) HDDs. Research on HDD and SSD storage configurations can be traced to Kim et al. \cite{ssdhddfirst}, that simulates both the replacement policy and the heterogeneous storage. 
 
-On the matter of cache policies, the emergence of [POLICY INTRODUCTION].
+On the matter of cache policies, the emergence of cache policies like Multi-Generational Least Recently Used (MGLRU) \cite{multigenlru}, S3-FIFO \cite{yang2023s3fifo} present interesting advancements in efficient cache policies and higher performance (hit rate and latency). These policies, however, do not exploit the heterogeneity in performance between devices and the difference in cost resulting in a cache miss. 
 
-% Motivation.
+Additionally, confirmed (via OA journals) research on page caching policies for heterogeneous storage has not been performed since 2012 \cite{lastpaper}, in which both SSDs and HDDs have changed, motivating a revisit to the problem under modern paging policy research and modern storage devices. Under the initial literature review, no paper has yet been discovered that has implemented a homogeneous storage page cache policy on bare metal.
 
-However, confirmed (via OA journals) research on page caching policies for heterogeneous storage has not been performed since 2012 \cite{lastpaper}, in which both SSDs and HDDS have changed, motivating a revisit to the problem under modern paging policy research and modern storage devices. Under the initial literature review, no paper has yet been discovered that has implemented a homogeneous storage page cache policy on bare metal.
-
-Simultaneously, the introduction of \cacheExt by Zussman et al. has introduced a non-intrusive approach towards modifying Linux's cache policy. \\ \texttt{cache\_ext} is a patched Linux kernel (v6.6.8) that enables custom page cache eviction and admission policies via extended Berkley Package Filter (eBPF) hooks and functions. Critically, it enables per-application policies and a wide variety of data structures to contain pages, enabling targeted testing.
+Simultaneously, the introduction of \cacheExt by Zussman et al. has introduced a non-intrusive approach towards modifying Linux's cache policy. \\ \texttt{cache\_ext} is a patched Linux kernel (v6.6.8) that enables custom page cache eviction and admission policies via extended Berkley Packet Filter (eBPF) hooks and functions. Critically, it enables per-application policies and a wide variety of data structures to contain pages, enabling targeted testing.
 
 % Challenges.
 
-Thus, We propose the hypothesis: \textbf{To what extent can heterogeneous SSD and HDD storage-aware page cache eviction policies improve performance, and what are the policies that correspond to benefits or impedance to specific workloads?}
+Thus, we propose the hypothesis: \textit{To what extent can heterogeneous SSD and HDD storage-aware page cache eviction policies improve performance, and what are the policies that correspond to benefits or impedance to specific workloads?}
 
-Additionally, we predict that: \textbf{A page cache policy that treats files from two different \textit{types} of disks will not be able to optimise for performance gaps. It is "cheaper", latency-wise, to fault in a page from a faster disk compared to a slower one.}
+Additionally, we predict that: \textit{A page cache policy that treats files from two different \textit{types} of disks will not be able to optimise for performance gaps. It is "cheaper", latency-wise, to fault in a page from a faster disk compared to a slower one.}
 
 % This problem has become widespread to the point where discussions of an "IO wall" for HDDs (the cheapest of the live secondary storage solutions) has now motivated research into optimising HDD storage \cite{declarativeio}.
 
@@ -255,41 +267,58 @@ From a page caching perspective however, this heterogeneity means that the cost 
 
 \subsection{Linux Page Caching}
 
-To clarify, the term page and folio are used
+The following serves as a summary to \S~2.1 of \cite{cache_ext}, as understanding the Linux kernel's caching mechanism is key to understanding the changes applied.
+
+First to clarify, the term page (a unit of physical memory) and folio ("a set of contiguous physical pages" \cite{cache_ext}) are used interchangeably, even though the latter are used for paging data between RAM and secondary storage \cite{cache_ext}.
+
+By default, Linux uses two FIFOs (named active and inactive) to approximate LRU eviction. Inactive pages move from tail to head, upon admission from storage to eviction back to storage. Repeated accesses can cause promotion from the inactive list to the tail of the active list. Pages at the head of the active list can be demoted to the tail of the inactive list to replenish eviction candidates.
+
+Critically, Linux's page caching policies are baked into the code of the kernel, meaning that any policy changes require changes kernel code changes. These policies are indifferent to the backing device, and are also designed to be generic, which have been proven to worsen specific applications \cite{cache_ext}.
 
 \subsection{Motivation}
 
 Software solutions have largely assumed that all storage behaves alike. The Linux page cache, the main layer that hides storage latency from applications. evicts pages by recency and frequency alone, treating every page as equally costly to lose \cite{multigenlru}. On a host with both an SSD and an HDD, re-reading an evicted HDD page takes roughly 50-100 times longer than an SSD page \cite{ssdvshdd}. The kernel thus minimises the number of misses rather than time applications spend waiting on them, and on mixed-device hosts it routinely trades a cheap SSD miss for an expensive HDD one.
 
-This idea is not new: Forney et. al ~\cite{forney} proposed storage-aware caching in 2002, but evaluated it only in simulation, and Meta's TMO~\cite{tmo} showed that reclaim decisions depends on the backing device's performance. Revisting this question in the era of NVMe and Optane devices, Wu et al.\cite{orthus} argue that the storage hierarchy is no longer a hierarchy and that caching layers which assume the cache device is always faster leave substantial performance unused, by upto $2\times$. Additionally, research on heterogeneous storage solutions, have demonstrated that mixed SSD and SSD + HDD solutions may yield higher performance metrics. For example, Takai et al. \cite{heterogeneousssd} have demonstrated that SSD cell type mixtures can enable higher IOPS/cost under specific workloads.
+This idea is not new: Forney et. al ~\cite{Forney} proposed storage-aware caching in 2002, but evaluated it only in simulation, and Meta's TMO~\cite{tmo} showed that reclaim decisions depends on the backing device's performance. Revisting this question in the era of NVMe and Optane devices, Wu et al.\cite{orthus} argue that the storage hierarchy is no longer a hierarchy and that caching layers which assume the cache device is always faster leave substantial performance unused, by upto $2\times$. Additionally, research on heterogeneous storage solutions, have demonstrated that mixed SSD and SSD + HDD solutions may yield higher performance metrics. For example, Takai et al. \cite{heterogeneousssd} have demonstrated that SSD cell type mixtures can enable higher IOPS/cost under specific workloads.
 
 % One existing software solution is \texttt{cache\_ext}, a patched v6.6.8 Linux kernel that enables page caching customisation via the extended Berkley Packet Filter (eBPF) \cite{cacheext}. Its main benefit is that it enables cache policy customisation without Linux kernel code modification.
 
-An existing customisability solution for the Linux page cache is \texttt{cache\_ext}, a patched v6.6.8 kernel \cite{cacheext}. It enables page cache policy customisation without kernel code modification via the extended Berkley Packet Filter (eBPF) interface. We aim to use eBPF to show how a cache policy accommodating heterogeneity might be beneficial for performance.
+An existing customisability solution for the Linux page cache is \texttt{cache\_ext}, a patched v6.6.8 kernel~\cite{cache_ext}. It enables page cache policy customisation without kernel code modification via the extended Berkley Packet Filter (eBPF) interface. We aim to use eBPF to show how a cache policy accommodating heterogeneity might be beneficial for performance.
 
 % This motivates us to merge these two ideas to recreate the performance benefits of existing heterogeneous storage solutions with the flexibility of eBPF.
 
-\subsection{Background on Storage Technologies}
-
-% SSDs
-
-% HDDs
-
 \subsection{Current Linux Page Eviction Policies}
+\label{sec:existing-policies}
 
-MGLRU
+Linux v6.6, which \cacheExt{} patches, ships two eviction algorithms: the active/inactive LRU (the default) and MGLRU (optional, not enabled upstream by default)~\cite{linuxv66src, cacheext}. \cacheExt{} reimplements several policies in eBPF~\cite{cacheext}; we describe the four our policies build on, as \cacheExt{} implements them.
 
-S3-FIFO
+\textbf{Active/inactive LRU and FIFO.} The default policy keeps two CLOCK-like lists~\cite{corbato1969paging}: new folios enter the inactive list and move to the active list on a second access, similar to 2Q~\cite{johnson1994twoq}. Reclaim evicts from the cold end of the inactive list, and recently evicted folios that refault are activated at once~\cite{linuxv66src}. This is also \cacheExt{}'s fallback when a policy frees 80\% or less of a reclaim request. \cacheExt{}'s FIFO example keeps one list in insertion order and evicts clean, up-to-date folios from its head.
 
-LRU with active, inactive list approximation
+\textbf{MGLRU.} The \cacheExt{} port keeps four generation lists, from \texttt{min\_seq} (oldest) to \texttt{max\_seq} (youngest), with three or four in use (Figure~\ref{fig:mglru}). New folios enter one of the two oldest generations. An access only increments a per-folio count; the folio's \emph{tier} is $\lfloor\log_2(\text{accesses})\rfloor$, capped at~3. Eviction scans only the oldest generation: folios whose tier is above a threshold are \emph{protected} and move to the next generation, and the rest are evicted. A feedback controller sets the threshold, protecting tiers whose refault rate, tracked through a ghost map, exceeds twice that of tier~0. Aging adds a new youngest generation, and the oldest is retired once it holds at most four folios. Unlike the kernel's MGLRU~\cite{multigenlru}, the port never resets a folio's count, so a protected folio stays protected, and its aging check ignores the youngest generation.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{mglru.png}
+    \caption{MGLRU as implemented by \cacheExt{}. Folios enter one of the two oldest generations; accesses only increment a per-folio count, whose logarithm gives the folio's tier. Eviction scans only the oldest generation, moving folios whose tier is above a refault-driven threshold to the next generation and evicting the rest. In MGLRU-dev (dashed), HDD folios are inserted \texttt{SLOW\_GEN\_BOOST} generations younger.}
+    \label{fig:mglru}
+    \Description{Four generation lists from oldest to youngest. New folios enter the oldest or second-oldest generation; under MGLRU-dev, HDD folios enter one generation younger. Eviction scans the oldest generation: folios whose tier exceeds the threshold, or that are dirty or locked, move to the next generation, and the rest are evicted, with their tier recorded in a ghost map. Refaults of ghost entries set the threshold, which protects tiers that refault more than twice as often as tier 0. Aging adds a new youngest generation, and the oldest generation is retired once at most four pages remain.}
+\end{figure}
+
+\textbf{S3-FIFO.} S3-FIFO~\cite{yang2023s3fifo} uses a small probation queue $S$, a main queue $M$ and a ghost queue of recently evicted identities. New objects enter $S$; when $S$ evicts, objects re-accessed while in $S$ move to $M$ and the rest leave quickly (\emph{quick demotion}~\cite{yang2023lpqd}). $M$ evicts CLOCK-style using a 2-bit counter. In the \cacheExt{} port, $S$ is drained when it exceeds $1/15$ of the cache or $|M| \le 2|S|$, and the read that causes a miss counts as an access, so promotion needs a counter above~1.
+
+% \textbf{Sampled eviction.} \cacheExt{}'s sampling policy keeps one list and a score per folio (its access count, making it a sampled LFU). To evict $r$ folios, it takes $r$ consecutive windows of $n = 20$ folios from the list head, evicts the lowest-scoring folio in each and requeues the rest at the tail. Unlike uniform random sampling~\cite{psounis2002randomized}, windows hold folios of similar age, so the head sweeps the list like a clock hand.
+
+\textbf{Implications.} None of these policies considers the device behind a folio. \cacheExt{} policies also run only when MGLRU is disabled, since MGLRU's reclaim path returns before the \cacheExt{} hook~\cite{linuxv66src}. Our baselines are therefore the kernel default, the kernel's MGLRU, and the \cacheExt{} ports our policies extend, with the page cache bounded by the cgroup~v2 \texttt{memory.max}~\cite{cgroupv2}.
 
 \subsection{\cacheExt}
 
+The framework that enables page cache policy changes without modifications to the Linux kernel is \cacheExt, by enabling policy execution through eBPF. The eBPF framework enables policies written to be executed within the kernel instead of forcing execution to userspace which would incur overhead when communicating between the kernel and userspace. \cacheExt provides developers with specific hooks related to folio operations (added, accessed, removed, evict) and the ability to build their own data structures to handle admission and eviction, as long as it is within the rules of eBPF code. Its flexible and easy code modification enable us to investigate into a wide variety of storage-aware admission and eviction policies.
+
 \subsection{Related Works}
 
-Apple's Fusion Drive offerings from 2012 to 2019
+% Apple's Fusion Drive offerings from 2012 to 2019
 
-Intel Optane Memory
+% Intel Optane Memory
 
 \textbf{Non-hierarchical caching.} The closest modern work to ours is Orthus\cite{orthus}, which, like Forney at al.\ \cite{forney} questions the assumption that caching layers sit in a strict performance hierarchy. Orthus introduces \textit{non-hierarchical caching} (NHC) for a fast storage device that caches a slower one. A feedback controller tunes two knobs: it stops admitting data into the cache once the cache already holds the hot set, and it redirects a fraction of hits on clean data to the capacity device so that both devices' bandwidth is used. It is implemented as a block-layer caching module (Orthus-CAS) and as a key-value store cache (Orthus-KV), and improves performance by up to $2\times$ over classic caching.
 
@@ -297,11 +326,30 @@ Intel Optane Memory
 
 \subsection{Hypothesis and Prediction}
 
-
-
 \section{Design}
 
+We describe the design objectives for the page cache eviction policies and the four proposed policies from these design objectives in this section. 
+
 \subsection{Design Objectives}
+
+
+Our policies share four objectives.
+
+\begin{enumerate}[leftmargin=1.5em, topsep=2pt, itemsep=1pt]
+    \item \textbf{Minimise time spent waiting on reads, not the number of misses.} Our hypothesis is that a device-aware policy reduces the total time spent waiting on reads,
+    \[
+    T_\text{wait} \approx \sum_{d} M_d \cdot L_d \approx M_\text{fast} \cdot L_\text{fast} + M_\text{slow} \cdot L_\text{slow} ,
+    \]
+    where $M_d$ is the number of misses served by device $d$ and $L_d$ its miss latency, even if it increases the total number of misses. A policy wins exactly when the fast-device misses it causes cost less than the slow-device misses it avoids, i.e.,
+    \[
+    \Delta M_\text{fast} \cdot L_\text{fast} < -\Delta M_\text{slow} \cdot L_\text{slow} .
+    \]
+    This requires both a large latency gap and a slow-device working set that benefits from the extra space. $L_d$ also depends on load, not only on the device type~\cite{orthus}.
+    \item \textbf{No kernel or application changes.} Every policy is a \cacheExt{} eBPF program attached to one memory cgroup, and identifies a page's device from kernel data structures alone, so applications need no modification.
+    \item \textbf{Device awareness as a small change to a strong baseline.} Three of the four policies extend a policy that \cacheExt{} already provides (MGLRU, S3-FIFO and sampled eviction), so any difference in behaviour comes from the device-aware change rather than from a new implementation.
+    \item \textbf{One parameter that turns the bias off.} Each policy has a single parameter whose neutral value removes its device bias, so comparing a policy against its own bias-off setting separates the effect of device awareness from the behaviour of the underlying \cacheExt{} port.
+    \item \textbf{Explore where a device bias can act, and how it is set.} The policies apply the bias at different points: eviction, insertion, probation and a per-page score. Two apply a \emph{fixed} bias, which is the same whether the HDD is $1.5\times$ or $50\times$ slower than the SSD; the other two apply a \emph{proportional} bias, whose parameter is derived by profiling the two devices (Section~\ref{sec:dev-tagging}).
+\end{enumerate}
 
 % Policies here
 \subsection{Proposed policies}
@@ -309,59 +357,139 @@ Intel Optane Memory
 % \subsection{Predicted Trade-Offs}
 % Better if these headsing are coalesced together
 
-Talk about the following for each:
-- Policy arch
-- How is the storage-awareness part included
-- Predicted trade-offs
+% Talk about the following for each:
+% - Policy arch
+% - How is the storage-awareness part included
+% - Predicted trade-offs
 
+\label{sec:policies}
+
+All four policies are \cacheExt{} \texttt{struct\_ops} programs attached to a single memory cgroup. Each implements the \texttt{init}, \texttt{folio\_added}, \texttt{folio\_accessed}, \texttt{folio\_evicted} and \texttt{evict\_folios} hooks; none implements \texttt{admit\_folio}. Table~\ref{tab:policies} summarises where each policy applies its device bias.
+
+\begin{table}[t]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}Xl@{}}
+    \toprule
+    Policy & Base & Bias acts on & Knob (off) \\
+    \midrule
+    Two-list LRU & FIFO example & victim list & $P_\text{fast}=0.75$ ($0.5$) \\
+    MGLRU-dev & MGLRU port & start generation & boost $=1$ ($0$) \\
+    S4-FIFO & S3-FIFO port & probation queue & $k$ ($1$) \\
+    FMR & sampling port & eviction score & BEI ratio ($1$) \\
+    \bottomrule
+  \end{tabularx}
+  \caption{The four device-aware policies, the \cacheExt{} policy each is built on, where it applies the device bias, and its bias parameter (with the value that removes the bias in brackets). \tbd{The policies in this are subject to change, including the "knob".}}
+  \label{tab:policies}
+\end{table}
+
+\subsubsection{Two-List LRU}
+\label{sec:two-list-lru}
+\tbd{This is a dummy policy, check if we want to keep this for later?}
+
+The two-list LRU keeps one LRU list per device: \texttt{folio\_added} appends a folio to its device's list and \texttt{folio\_accessed} moves it to the tail. On each eviction call, a biased coin picks which list to scan from the head first, the fast list with probability $0.75$, and the other list supplies any shortfall. This resembles Forney et al.'s static partitioning~\cite{Forney}, with a fixed bias rather than one derived from device costs.
+
+The coin ignores how recently each list's head was used, so under sustained pressure the fast list can shrink until it evicts pages accessed moments earlier; unless the cost gap is large, the extra SSD misses outweigh the HDD misses avoided. A probability of $0.5$ removes the bias.
+
+\subsubsection{MGLRU-dev}
+\label{sec:mglru-dev}
+
+MGLRU-dev extends \cacheExt{}'s MGLRU port (Section~\ref{sec:existing-policies}) with one change: an HDD folio is inserted \texttt{SLOW\_GEN\_BOOST} generations younger (one by default, capped at \texttt{max\_seq}) than the port would place it (Figure~\ref{fig:mglru}). Tiers, the protection threshold and eviction are unchanged.
+
+Since only the oldest generation is scanned, the boost gives each HDD folio at least one extra generation to collect accesses and reach a protected tier before it can be evicted; as the port never resets access counts, protection earned this way persists. The boost helps only once some tiers are protected, otherwise it merely delays eviction. Its costs are that single-use HDD reads displace SSD folios for longer, aging runs more often, and a boost of two or more places all HDD folios in the youngest generation, weakening scan resistance. The bias is fixed rather than scaled to the cost gap; a boost of zero recovers the port.
+
+\subsubsection{S4-FIFO}
+\label{sec:s4fifo}
+
+S4-FIFO extends \cacheExt{}'s S3-FIFO port (Section~\ref{sec:existing-policies}) by splitting the probation queue $S$ into one queue per device; the main queue, the ghost map and the sizing rule, applied to the two queues' combined size, are unchanged. When $S$ must evict, the policy compares the ages of the two queue heads and scans the slow queue first only if
+\[
+a_\text{slow} > k \cdot a_\text{fast},
+\]
+where $k$ is the measured latency ratio (Section~\ref{sec:dev-tagging}); the other queue supplies any shortfall. In steady state this gives HDD folios about $k$ times longer than SSD folios to earn the one re-access that promotes them to $M$, in the spirit of cost-aware Hyperbolic caching\cite{blankstein2017hyperbolic}. With $k=1$ the two queues behave like the port's single $S$; a special setting $k=0$ always drains the fast queue first.
+
+We expect S4-FIFO to help most when many single-use HDD reads are mixed with HDD pages that are reused once. Its costs are that heavy HDD traffic shrinks the SSD folios' probation time and so their chance of promotion, an effect that is extreme with $k=0$, and that only probation is device-aware: evictions from $M$, which dominate once $S$ is small, ignore the device.
+
+\subsubsection{Five-Minute Rule (FMR)}
+\label{sec:fmr}
+
+FMR turns Gray and Putzolu's five-minute rule~\cite{gray1987fiveminute, gray1997fiveminute} into an eviction order. A page idle for longer than its device's break-even interval (BEI) is cheaper to re-read than to keep, so FMR replaces the access count of \cacheExt{}'s sampling policy (Section~\ref{sec:existing-policies}) with how far a folio is \emph{overdue},
+\[
+\text{overdue}(f) = \frac{\text{now} - \text{last\_access}(f)}{\text{BEI}[\text{dev}(f)]},
+\]
+and evicts the most overdue folio in each window. Each BEI is set from device profiling (Section~\ref{sec:dev-tagging}), either from the latency ratio or from Gray and Graefe's economic formula; only the ratio $\text{BEI}_\text{slow}/\text{BEI}_\text{fast}$ affects the eviction order. An HDD folio therefore survives until it has been idle about that many times longer than its SSD neighbours. With equal BEIs, FMR evicts the least recently used folio in each window, which is its bias-off baseline.
+
+Devices are compared only within a window of neighbouring folios, so the realised bias is weaker than the BEI ratio when a window holds few folios from the other device. Every window also yields a victim even if all its folios are hot. Idle time is a single-sample estimate of a folio's reuse interval, and, like LRU, FMR has no scan resistance.
 
 \section{Implementation}
 
-\texttt{cache\_ext} is a patched Linux kernel (v6.6.8), so we need root access and the ability to boot a custom kernel on a machine with both an SSD and an HDD, most likely using the bootloader \texttt{grub}.
+% \texttt{cache\_ext} is a patched Linux kernel (v6.6.8), so we need root access and the ability to boot a custom kernel on a machine with both an SSD and an HDD, most likely using the bootloader \texttt{grub}.
+% \begin{itemize}[
+%     leftmargin=2.0em,
+%     labelsep=0.3em,
+%     topsep=1pt,
+%     itemsep=0pt,
+%     parsep=0pt
+% ]
+%     \item \textbf{Hardware:} CloudLab Wisconsin bare-metal nodes, which pair HDDs with an SSD in one machine. 
+%     \tbd{Revisit this. Does not look like it belongs here.}
+%     \item \textbf{Software:} the \texttt{cache\_ext} kernel and sample policies, clang/libbpf/bpftool, cgroup-v2 for limiting memory and reading I/O pressure. 
+%     % [NEED TO DECIDE ON THE WORKLOADS] -> mentioned in the proposed evaluation methodology section.
+% \end{itemize}
 
-\begin{itemize}[
-    leftmargin=2.0em,
-    labelsep=0.3em,
-    topsep=1pt,
-    itemsep=0pt,
-    parsep=0pt
-]
-    \item \textbf{Hardware:} CloudLab Wisconsin bare-metal nodes, which pair HDDs with an SSD in one machine. 
-    \item \textbf{Software:} the \texttt{cache\_ext} kernel and sample policies, clang/libbpf/bpftool, cgroup-v2 for limiting memory and reading I/O pressure. 
-    % [NEED TO DECIDE ON THE WORKLOADS] -> mentioned in the proposed evaluation methodology section.
-\end{itemize}
+Our policies comprise about 1{,}800 lines of eBPF C/cache, 650 lines of userspace loaders and 150 lines of shared device-tagging code, built with clang and libbpf using \cacheExt{}'s build flags.
 
- 
+\subsection{Policy Structure}
+
+Each policy is an eBPF \texttt{struct\_ops} program with a libbpf loader that resolves the two mount points to devices, sets the policy's parameters, attaches it to a cgroup and prints per-device counters on exit. Runtime parameters are $k$ for S4-FIFO, the two BEIs for FMR and the metadata map size for MGLRU-dev; the two-list LRU's probability and MGLRU-dev's boost are compile-time constants. As eBPF has no floating point, $k$ and FMR's score are kept in fixed point. Relative to the \cacheExt{} ports, our policies replace the inode-number watch list with device tagging, and S4-FIFO fixes an accounting error that left folios moved from $S$ to $M$ counted in $S$.
+
+\subsection{Device Tagging}
+\label{sec:dev-tagging}
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{device_tagging.png}
+    \caption{Device tagging and folio lifecycle shared by all four policies. The loader maps each mount point's device to an index; \texttt{folio\_added} tags each new folio with the device of its file's superblock; on reclaim, \texttt{evict\_folios} proposes up to 32 victims per batch, and if the policy reclaims 80\% or less of the target the kernel falls back to its device-oblivious active/inactive scan.}
+    \label{fig:dev-tagging}
+    \Description{Flow diagram in three rows. Loader: stat the two mount points, convert to kernel device numbers, fill dev_idx_map, attach the policy to the cache_ext cgroup. Insertion: a read miss adds a folio, folio_added looks up its superblock device in dev_idx_map, and the folio is either tagged fast or slow or left untracked. Reclaim: when the cgroup exceeds memory.max, evict_folios returns up to 32 candidates, the kernel reclaims them, and if 80 percent or less of the target was reclaimed the classic active/inactive scan runs.}
+\end{figure*}
+
+All four policies share one tagging layer (Figure~\ref{fig:dev-tagging}). The loader calls \texttt{stat()} on both mount points, converts each \texttt{st\_dev} to the kernel's \texttt{dev\_t} encoding and stores the pair in a BPF map, \texttt{dev\_idx\_map}, before attaching the policy; it refuses to start if both are on the same device. In \texttt{folio\_added}, the policy follows \texttt{folio->mapping->host->i\_sb->s\_dev} \newline and looks the device up in this map. The result, fast or slow, is stored in the folio's metadata; folios on any other device are not tracked.
+
+\textbf{\cacheExt{} constraints.} The kernel requests at most 32 victims per call, and if a policy reclaims 80\% or less of its target, it falls back to its device-oblivious scan over all of the cgroup's folios \cite{cache_ext}. Hooks run only in cgroups whose names begin with \texttt{cache\_ext}, \texttt{folio\_accessed} does not see \texttt{mmap} accesses, and the read that causes a miss counts as an access.
+
+\textbf{Profiling.} S4-FIFO's $k$ and FMR's BEI ratio are both set to the ratio of mean read latencies, $L_\text{slow}/L_\text{fast}$, measured by fio~\cite{fio} with 4\,KB direct random reads at queue depth 1 on each mount point. The script can also compute economic BEIs following Gray and Graefe~\cite{gray1997fiveminute}.
+
 \section{Experimental Setup and Methodology}
 \label{sec:setup}
- 
+
 \subsection{Testbed}
- 
-We use a CloudLab bare-metal node with 2 CPU cores and 2\,GB of RAM, running the \cacheExt{} kernel (Linux 6.6.8). A node with both an SSD and an HDD was not available in time for these experiments, so we emulate a slower device. A single physical disk is split into two partitions, each formatted with ext4. The first is used directly as the \emph{fast} device. The second is placed behind Linux's \texttt{dm-delay} device-mapper target, configured with a 5\,ms delay on reads and writes, and serves as the \emph{slow} device. Because \texttt{dm-delay} works in kernel timer ticks, the effective delay differs from the configured value, so we report measured latencies: under our synthetic workload, reads that reached the disk took 18\,ms on average on the fast device and 29\,ms on the slow device, a ratio of about 1.6. Both partitions share one physical disk, which we believe to be a hard drive. \tbd{Arjun: confirm the disk model and the node type, and add the second node (SSD + HDD) once results from it are available.}
- 
+
+We use a CloudLab bare-metal node with 2 CPU cores and 2\,GB of RAM, running the \cacheExt{} kernel (Linux 6.6.8). A node with both an SSD and an HDD was not available in time for these experiments, so we emulate a slower device. A single physical disk is split into two partitions, each formatted with ext4. The first is used directly as the \emph{fast} device. The second is placed behind Linux's \texttt{dm-delay} device-mapper target, configured with a 5\,ms delay on reads and writes, and serves as the \emph{slow} device. Because \texttt{dm-delay} works in kernel timer ticks, the effective delay differs from the configured value, so we report measured latencies: under our synthetic workload, reads that reached the disk took 18\,ms on average on the fast device and 29\,ms on the slow device, a ratio of about 1.6. Both partitions share one physical disk, which we believe to be a hard drive. \tbd{Arjun: confirm the disk model and the node type, and add the second node (SSD + HDD) once results from it are available. Add the queue-depth-1 latencies from the profiling script (Section~4) used to set $k$ and the BEI ratio.}
+
 \subsection{Workloads}
- 
+
 \subsubsection{Synthetic Two-Device Microbenchmark}
- 
+
 We use fio~\cite{fio} with eight threads issuing 4\,KB random reads through the page cache (\texttt{psync}, buffered I/O). The workload reads two 512\,MB files, one on each device. Each read chooses one of the two files uniformly at random, so both files receive the same number of requests, and chooses an offset within that file from a Zipfian distribution with $\theta = 0.9$. All threads share a single hot set. Each thread issues its next read only when the previous one completes. The workload therefore models a single application that depends equally on data stored on two devices of different speeds, and it isolates one variable: the two files are equally popular, so any difference in how a policy treats them comes from the device they are stored on.
- 
+
 \subsubsection{Production Block I/O Traces}
- 
+
 To evaluate policies on realistic access patterns, we will replay two public production traces:
- 
+
 \begin{itemize}[leftmargin=1.5em, topsep=2pt, itemsep=1pt]
     \item \textbf{Meta Tectonic (Baleen)}~\cite{baleen}. Anonymised requests from Meta's production bulk storage system (Tectonic), recorded at a CacheLib flash cache placed in front of it. Seven traces are provided, each sampled by block ID from a different storage cluster, and each request records a block ID, byte offset, I/O size, timestamp and operation. Down-sampled versions (0.1\% and 1\%) are provided, each intended to be used with a cache of the same relative size.
     \item \textbf{Alibaba Cloud block traces}~\cite{alibabatraces}. All I/O to 1{,}000 virtual disks, randomly sampled from a production elastic block storage cluster, over January 2020. Each record contains a disk ID, read/write flag, byte offset, length and timestamp. The full trace is 181\,GB compressed and 751\,GB uncompressed, so we will use a subset of disks and a time window.
 \end{itemize}
- 
+
 \textbf{Replay.} We will convert the read requests of each trace into fio's I/O log format and replay them with fio through the page cache (buffered I/O) in a single cgroup, so that the same harness, memory limits and metrics apply as for the synthetic workload. Each trace volume (a Tectonic block or an Alibaba virtual disk) is mapped to a file, and the files are placed on the fast and slow devices. \tbd{Decide: (a) how volumes are assigned to devices, e.g.\ randomly, by access frequency (hot data on the fast or the slow device), or by size; (b) whether to replay writes; (c) whether to replay at the recorded timestamps or as fast as possible; (d) which subset and time window to use, and how offsets are scaled to fit the node's disk and memory.} Because both traces were recorded below a cache in the original system (the Baleen traces at a flash cache in front of HDDs, the Alibaba traces at the block device of each virtual disk, below the guest's page cache), part of the original reuse has already been absorbed upstream; we expect lower hit rates than with the synthetic workload and will report them.
- 
+
 \subsection{Memory Limit}
- 
-Each workload runs in one cgroup v2 whose \texttt{memory.max} limits its page cache, with swap disabled. For the synthetic workload we use 64, 128 and 256\,MB, between one sixteenth and one quarter of the 1\,GB of data, so the policy must continually choose which pages to evict. \tbd{Memory limits for the trace replays, chosen relative to each trace's footprint.} Because a \cacheExt{} policy is attached per cgroup, the pages of both devices are managed by the same policy.
- 
+
+Each workload runs in a single cgroup v2 with swap disabled, and the cgroup's memory limit (\texttt{memory.max}) bounds its page cache. For the synthetic workload we use 64, 128 and 256\,MB, between one sixteenth and one quarter of the 1\,GB of data, so the policy must continually choose which pages to evict. \tbd{Memory limits for the trace replays, chosen relative to each trace's footprint.} Because a \cacheExt{} policy is attached per cgroup, the pages of both devices are managed by the same policy.
+
 \subsection{Procedure}
- 
+
 For each policy and memory limit we:
 \begin{enumerate}[leftmargin=1.5em, topsep=2pt, itemsep=1pt]
     \item drop the page cache;
@@ -370,21 +498,25 @@ For each policy and memory limit we:
     \item run the workload for 240\,s without measuring, so that the cache contents reflect the policy rather than the initial fill (at the measured rate of about 340 misses per second, this replaces even the 256\,MB cache at least once);
     \item run the workload for 30\,s and measure.
 \end{enumerate}
-The cgroup's name must begin with \texttt{cache\_ext}: the \cacheExt{} kernel enables the policy hooks only for such cgroups. In any other cgroup the policy's \texttt{init} hook runs but its page-level hooks are never called, and the kernel's default policy evicts all pages. We verify every policy run by enabling BPF run-time statistics and checking that the run counts of \texttt{folio\_added}, \texttt{folio\_accessed} and \texttt{evict\_folios} increase during the run. We report one run per configuration. \tbd{Increase to at least three runs per configuration for the final report.}
- 
+Each cgroup's name begins with \texttt{cache\_ext}, without which the \cacheExt{} kernel never calls the policy's page-level hooks (Section~4). We verify every policy run by enabling BPF run-time statistics and checking that the run counts of \texttt{folio\_added}, \texttt{folio\_accessed} and \texttt{evict\_folios} increase during the run. We report one run per configuration. \tbd{Increase to at least three runs per configuration for the final report.}
+
 \subsection{Metrics}
- 
+
 From fio we record throughput (IOPS) and tail latency (p99). From \texttt{/proc/diskstats} we record, for each device, the number of reads that reached the device (page cache misses) and the time spent on them, from which we compute the average read latency. After each run we record the fraction of each file resident in the page cache using \texttt{mincore}. Cache hits are computed as fio reads minus device reads.
- 
+
 We check each run for validity: the cgroup was 86--97\% full at the start of measurement, so eviction was taking place; every device read transferred exactly 4\,KB, so read-ahead did not bring in additional pages; and the node was otherwise idle, since \texttt{/proc/diskstats} counts I/O from all processes.
- 
+
 \subsection{Policies}
- 
-We compare the default kernel policy (classic two-list LRU, with MGLRU disabled), MGLRU, and the two-list biased LRU (one LRU list per device; each eviction request is served from the fast device's list with probability 0.75, falling back to the other list if needed). As a check that \cacheExt{} policies take effect on our testbed, we also ran the \cacheExt{} MRU policy at 64\,MB, with a 120\,s warm-up. \tbd{Add the cost-aware policy once implemented.}
- 
+
+\textbf{Baselines.} The kernel's default policy (the active / inactive LRU, with MGLRU disabled), the kernel's MGLRU, and the \cacheExt{} ports that our policies extend (MGLRU, S3-FIFO and sampled eviction; Section~2.4).
+
+\textbf{Device-aware policies.} The two-list LRU, MGLRU-dev, S4-FIFO and FMR (Section~3.2). Each is also run with its bias parameter at the neutral value (Table~1), which separates the effect of device awareness from the behaviour of the underlying port.
+
+As a check that \cacheExt{} policies take effect on our testbed, we also ran the \cacheExt{} MRU policy at 64\,MB, with a 120\,s warm-up. So far we have measured the kernel default, the kernel's MGLRU and the two-list LRU on the synthetic workload; Section~\ref{sec:eval} reports these results. \tbd{Update once the remaining policies and the cache\_ext ports have been run.}
+
 \section{Evaluation}
 \label{sec:eval}
- 
+
 \begin{figure*}[t]
     \centering
     \includegraphics[width=\textwidth]{hetero_fio_policies.png}
@@ -392,7 +524,7 @@ We compare the default kernel policy (classic two-list LRU, with MGLRU disabled)
     \label{fig:policies}
     \Description{Two grouped bar charts over memory limits of 64, 128 and 256 MB. Left: IOPS for default, MGLRU and the two-list LRU; the two-list LRU is 24 and 28 percent lower at 64 and 128 MB and 4 percent lower at 256 MB. Right: default and MGLRU hold 50 percent slow-file pages; the two-list LRU holds 98, 99 and 81 percent.}
 \end{figure*}
- 
+
 \begin{table}[t]
   \centering
   \small
@@ -409,35 +541,34 @@ We compare the default kernel policy (classic two-list LRU, with MGLRU disabled)
   \caption{Synthetic workload: throughput (IOPS) by policy and cgroup memory limit. \emph{Slow} is the share of cached pages belonging to the slow file under the two-list LRU (50\% for the default and MGLRU).}
   \label{tab:results}
 \end{table}
- 
+
 \subsection{Existing Policies Ignore the Device}
- 
+
 Under both the default policy and MGLRU, the two files are cached equally at every memory limit (3.6\%, 8.8\% and 21.5\% of each file at 64, 128 and 256\,MB for the default policy), and the two devices see almost the same number of misses (about 5{,}100 each in 30\,s). The two policies also perform almost identically: MGLRU is within 6\% of the default at every size (Table~\ref{tab:results}). Throughput rises with the memory limit, from 683 to 1255 IOPS for the default policy, as the hit rate rises from 50\% to 73\%.
- 
+
 Because a miss on the slow device costs about 1.6 times as much as a miss on the fast device, this even split is not even in cost. With the default policy, the slow device accounts for 61--62\% of the total disk read time while receiving half of the misses.
- 
+
 \subsection{A Fixed Bias Reduces Throughput}
- 
+
 The two-list LRU changes how the cache is divided as intended: the slow file's pages make up 98\%, 99\% and 81\% of the cached pages at 64, 128 and 256\,MB (Figure~\ref{fig:policies}, right), and reads that reach the disk shift from an even split to roughly two fast-device reads for every slow-device read. However, throughput falls by 24\% and 28\% at 64 and 128\,MB and by 4\% at 256\,MB (Figure~\ref{fig:policies}, left), and p99 latency rises from 64--68\,ms to 82--87\,ms at the two smaller sizes.
- 
+
 The cause is lost hits. At 64\,MB the fast file keeps only about 0.4\,MB (about 100 pages) in the cache, compared with 18\,MB under the default policy, even though it receives half of all reads. Hits in 30\,s fall from 10{,}273 to 4{,}749 (a hit rate of 31\% instead of 50\%), while the number of misses barely changes (10{,}247 versus 10{,}786). At 128\,MB hits fall from 16{,}928 to 8{,}030. The policy evicts the fast file's most frequently used pages in order to keep slow-file pages that are used less often, because the biased coin chooses which list to evict from regardless of how recently the pages in that list were used. When the fast list holds only about a hundred pages, its least recently used page was typically accessed moments earlier.
- 
+
 The disk is saturated in every configuration: it completes about 340--380 misses per second regardless of the policy, and the eight threads spend almost all of their time waiting on it, so the fast and slow read times add up to about 240\,s per 30\,s run (eight threads $\times$ 30\,s) under every policy. In this regime throughput is determined by the hit rate, and a policy that reduces hits reduces throughput even if it moves misses to the faster device. With 256\,MB of cache, the fast file keeps 8\% of its pages resident and the loss shrinks to 4\%.
- 
+
 Sharing one disk also affects per-device latency: under the two-list LRU, reads on the fast device became faster (13--15\,ms) and reads on the slow device slower (36--43\,ms), as the mix of requests at the disk changed.
- 
+
 \subsection{Sanity Check}
- 
+
 The \cacheExt{} MRU policy, which evicts the most recently used pages, achieves 365 IOPS at 64\,MB compared with 683 for the default, and its hooks were invoked tens of thousands of times during the run, confirming that \cacheExt{} policies control eviction on our testbed. Runs made in a cgroup without the \texttt{cache\_ext} prefix matched the default policy exactly and are excluded.
- 
+
 \subsection{Trace-Driven Evaluation}
- 
+
 \tbd{Results of replaying the Baleen and Alibaba traces (Section~\ref{sec:setup}): throughput, hit rate and per-device misses for each policy and memory limit. Not yet run.}
- 
+
 \subsection{Summary}
- 
+
 On the synthetic workload, the default policy and MGLRU divide the cache evenly between the fast and slow devices, so the slow device dominates disk read time. A fixed bias towards keeping slow-device pages corrects the division but discards frequently used fast-device pages and lowers throughput by up to 28\%. These results are from an emulated slow device only about 1.6 times slower than the fast one, with both on the same disk; with a real SSD and HDD, the benefit of keeping slow-device pages should be much larger.
- 
 
 
 \section{Discussion}
@@ -446,7 +577,7 @@ On the synthetic workload, the default policy and MGLRU divide the cache evenly 
 
 \subsubsection{Limitations}
 
-\subsubsection{Related Works}
+% \subsubsection{Related Works}
 
 \subsubsection{Future Work}
 
@@ -454,16 +585,18 @@ On the synthetic workload, the default policy and MGLRU divide the cache evenly 
 
 \section{Conclusion}
 
-\section{Acknowledgements}
+\tbd{Fill this up after results?}
+
+% \section{Acknowledgements}
 
 
 % Additionally, with different mediums of secondary storage available, from Hard Disk Drives (HDDs) to Solid State Drives (SSDs) to Storage Attached Networks (SANs), has caused the . 
 
-It is also worth noting performance disparities in a \textit{class} of secondary storage. For example, SSD solutions have trended to lower performance solutions via increasing the state stored by NAND cells, moving from single-level cell up to proposed penta-level cell. These newer cell solutions enable higher density storage, but sacrifice performance and write endurance \cite{qlc}.
+% It is also worth noting performance disparities in a \textit{class} of secondary storage. For example, SSD solutions have trended to lower performance solutions via increasing the state stored by NAND cells, moving from single-level cell up to proposed penta-level cell. These newer cell solutions enable higher density storage, but sacrifice performance and write endurance \cite{qlc}.
 
-We would like to point out that heterogeneous storage solutions differ from tiered storage solutions. Heterogeneous solutions can be defined as appearing as a single storage mechanism, and how this mechanism performs. By contrast, tiered solutions can be defined as a policy on data placement.
+% We would like to point out that heterogeneous storage solutions differ from tiered storage solutions. Heterogeneous solutions can be defined as appearing as a single storage mechanism, and how this mechanism performs. By contrast, tiered solutions can be defined as a policy on data placement.
 
-Considering the heterogeneous nature of secondary storage, in performance, a page cache policy that treats files from two different \textit{types} of disks will not be able to optimise for performance gaps. It is "cheaper", latency-wise, to fault in a page from a faster disk compared to a slower one.
+% Considering the heterogeneous nature of secondary storage, in performance, a page cache policy that treats files from two different \textit{types} of disks will not be able to optimise for performance gaps. It is "cheaper", latency-wise, to fault in a page from a faster disk compared to a slower one.
 
 % \section{Evaluation and Methodology}
 
@@ -521,11 +654,10 @@ Considering the heterogeneous nature of secondary storage, in performance, a pag
 
 % It is our plan to involve AI in our project. We will use AI for the implementation of our proposed policy. Our AI usage will follow closely with the AI policy of CS736. Critically, we will not use AI for idea generation, \textcolor{blue}{\href{https://dictionary.cambridge.org/us/dictionary/english/waffling}{writing}} (except making LaTeX .bib citations) or presentation creation.
 
+\definecolor{darkblue}{rgb}{0.0, 0.0, 0.5}
 
 \section{Overleaf link}
-For reference, our LaTeX source can be found below.
-\newline
-% \textcolor{blue}{\url{https://www.overleaf.com/read/nrhbnrgdhdzh#16effe}}
+For reference, our LaTeX source can be found \href{https://www.overleaf.com/project/6b0499d40bcb0b93df7e83e1/share#f5b1bafdbf04bc691c6747c21540f1d2ac439629964ca6a0}{\color{darkblue}here}.
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{sample-base}

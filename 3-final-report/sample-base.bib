@@ -1,3 +1,20 @@
+@inproceedings{cache_ext,
+    author       = {Zussman, Tal and Zarkadas, Ioannis and Carin, Jeremy
+                    and Cheng, Andrew and Franke, Hubertus
+                    and Pfefferle, Jonas and Cidon, Asaf},
+    title        = {{cache\_ext}: Customizing the Page Cache with {eBPF}},
+    booktitle    = {Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles},
+    series       = {SOSP '25},
+    year         = {2025},
+    pages        = {462-478},
+    publisher    = {Association for Computing Machinery},
+    address      = {New York, NY, USA},
+    isbn         = {9798400718700},
+    doi          = {10.1145/3731569.3764820},
+    url          = {https://doi.org/10.1145/3731569.3764820},
+    note         = {Accessed: 2026-10-16}
+}
+
 @misc{memory_prices,
     author       = {Shim, David},
     title        = {Memory Prices},
@@ -15,23 +32,6 @@
     month        = nov,
     day          = {8},
     url          = {https://www.computerweekly.com/feature/What-is-QLC-flash-and-what-workloads-it-is-good-for},
-    note         = {Accessed: 2026-10-16}
-}
-
-@inproceedings{cacheext,
-    author       = {Zussman, Tal and Zarkadas, Ioannis and Carin, Jeremy
-                    and Cheng, Andrew and Franke, Hubertus
-                    and Pfefferle, Jonas and Cidon, Asaf},
-    title        = {{cache\_ext}: Customizing the Page Cache with {eBPF}},
-    booktitle    = {Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles},
-    series       = {SOSP '25},
-    year         = {2025},
-    pages        = {462-478},
-    publisher    = {Association for Computing Machinery},
-    address      = {New York, NY, USA},
-    isbn         = {9798400718700},
-    doi          = {10.1145/3731569.3764820},
-    url          = {https://doi.org/10.1145/3731569.3764820},
     note         = {Accessed: 2026-10-16}
 }
 
@@ -54,8 +54,7 @@
 }
 
 @inproceedings{forney,
-    author       = {Forney, Brian C. and Arpaci-Dusseau, Andrea C.
-                    and Arpaci-Dusseau, Remzi H.},
+    author       = {Forney, Brian C. and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
     title        = {Storage-Aware Caching: Revisiting Caching for Heterogeneous Storage Systems},
     booktitle    = {Proceedings of the 1st USENIX Conference on File and Storage Technologies},
     series       = {FAST '02},
@@ -227,4 +226,106 @@
   month     = feb,
   publisher = {USENIX Association},
   url       = {https://www.usenix.org/conference/fast21/presentation/wu-kan}
+}
+
+@misc{linuxv66src,
+  author       = {{Linux Kernel Contributors}},
+  title        = {Linux v6.6 source: \texttt{mm/vmscan.c}, \texttt{mm/workingset.c}, \texttt{mm/Kconfig}, \texttt{include/linux/mmzone.h}},
+  howpublished = {\url{https://github.com/torvalds/linux/tree/v6.6/mm}},
+  year         = {2023},
+  note         = {Accessed: 2026-11-25}
+}
+
+@incollection{corbato1969paging,
+  author    = {F. J. Corbat{\'o}},
+  title     = {A Paging Experiment with the {Multics} System},
+  booktitle = {In Honor of {Philip M. Morse}},
+  editor    = {Herman Feshbach and K. Uno Ingard},
+  publisher = {MIT Press},
+  address   = {Cambridge, MA},
+  pages     = {217--228},
+  year      = {1969}
+}
+
+@inproceedings{johnson1994twoq,
+  author    = {Johnson, Theodore and Shasha, Dennis},
+  title     = {{2Q}: A Low Overhead High Performance Buffer Management Replacement Algorithm},
+  booktitle = {Proceedings of the 20th International Conference on Very Large Data Bases ({VLDB} '94)},
+  pages     = {439--450},
+  year      = {1994},
+  address   = {Santiago, Chile},
+  publisher = {Morgan Kaufmann}
+}
+
+@inproceedings{yang2023s3fifo,
+  author    = {Yang, Juncheng and Zhang, Yazhuo and Qiu, Ziyue and Yue, Yao and Vinayak, K. V. Rashmi},
+  title     = {{FIFO} Queues are All You Need for Cache Eviction},
+  booktitle = {Proceedings of the 29th Symposium on Operating Systems Principles ({SOSP} '23)},
+  pages     = {130--149},
+  year      = {2023},
+  address   = {Koblenz, Germany},
+  publisher = {ACM},
+  doi       = {10.1145/3600006.3613147}
+}
+
+@inproceedings{yang2023lpqd,
+  author    = {Yang, Juncheng and Qiu, Ziyue and Zhang, Yazhuo and Yue, Yao and Vinayak, K. V. Rashmi},
+  title     = {{FIFO} Can Be Better than {LRU}: The Power of Lazy Promotion and Quick Demotion},
+  booktitle = {Workshop on Hot Topics in Operating Systems ({HotOS} '23)},
+  pages     = {70--79},
+  year      = {2023},
+  address   = {Providence, RI, USA},
+  publisher = {ACM},
+  doi       = {10.1145/3593856.3595887}
+}
+
+@article{psounis2002randomized,
+  author  = {Psounis, Konstantinos and Prabhakar, Balaji},
+  title   = {Efficient Randomized Web-Cache Replacement Schemes Using Samples from Past Eviction Times},
+  journal = {{IEEE/ACM} Transactions on Networking},
+  volume  = {10},
+  number  = {4},
+  pages   = {441--455},
+  month   = aug,
+  year    = {2002},
+  doi     = {10.1109/TNET.2002.801414}
+}
+
+@misc{cgroupv2,
+  author       = {{Linux Kernel Documentation}},
+  title        = {Control Group v2},
+  year         = {2023},
+  howpublished = {\url{https://www.kernel.org/doc/html/v6.6/admin-guide/cgroup-v2.html}},
+  note         = {Linux v6.6. Accessed: 2026-11-25}
+}
+
+@inproceedings{blankstein2017hyperbolic,
+  author    = {Aaron Blankstein and Siddhartha Sen and Michael J. Freedman},
+  title     = {Hyperbolic Caching: Flexible Caching for Web Applications},
+  booktitle = {2017 {USENIX} Annual Technical Conference ({USENIX} {ATC} 17)},
+  pages     = {499--511},
+  year      = {2017},
+  publisher = {{USENIX} Association}
+}
+
+@inproceedings{gray1987fiveminute,
+  author    = {Jim Gray and Franco Putzolu},
+  title     = {The 5 Minute Rule for Trading Memory for Disc Accesses and the 10 Byte Rule for Trading Memory for {CPU} Time},
+  booktitle = {Proceedings of the 1987 {ACM} {SIGMOD} International Conference on Management of Data},
+  pages     = {395--398},
+  year      = {1987},
+  publisher = {ACM},
+  doi       = {10.1145/38713.38755}
+}
+
+@article{gray1997fiveminute,
+  author  = {Jim Gray and Goetz Graefe},
+  title   = {The Five-Minute Rule Ten Years Later, and Other Computer Storage Rules of Thumb},
+  journal = {{SIGMOD} Record},
+  volume  = {26},
+  number  = {4},
+  pages   = {63--68},
+  year    = {1997},
+  month   = dec,
+  doi     = {10.1145/271074.271094}
 }
