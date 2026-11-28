@@ -1,11 +1,8 @@
 #include <argp.h>
 #include <bpf/bpf.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -14,12 +11,11 @@
 #include "hetero_dev.h"
 
 char *USAGE = "Usage: ./cache_ext_mglru --cgroup_path <path> [--fast_dir <dir>] "
-	      "[--slow_dir <dir>] [--max_folios <n>]\n";
+	      "[--slow_dir <dir>]\n";
 struct cmdline_args {
 	char *fast_dir;
 	char *slow_dir;
 	char *cgroup_path;
-	unsigned long max_folios;  // 0 = keep the BPF default (MAX_NR_FOLIOS)
 };
 
 static struct argp_option options[] = {
@@ -29,8 +25,6 @@ static struct argp_option options[] = {
 	  "Directory on the slow device (default: " DEFAULT_SLOW_DIR ")" },
 	{ "cgroup_path", 'c', "PATH", 0,
 	  "Path to cgroup (e.g., /sys/fs/cgroup/cache_ext_test)" },
-	{ "max_folios", 'm', "N", 0,
-	  "Max folios the policy can track (default: MAX_NR_FOLIOS in the BPF code)" },
 	HETERO_WATCH_DIR_OPTION,
 	{ 0 }
 };
@@ -38,7 +32,6 @@ static struct argp_option options[] = {
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
 	struct cmdline_args *args = state->input;
-	char *end;
 	switch (key) {
 	case 'f':
 		args->fast_dir = arg;
@@ -48,12 +41,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		break;
 	case 'c':
 		args->cgroup_path = arg;
-		break;
-	case 'm':
-		errno = 0;
-		args->max_folios = strtoul(arg, &end, 10);
-		if (errno || *end != '\0' || args->max_folios == 0)
-			argp_error(state, "invalid --max_folios: %s", arg);
 		break;
 	case HETERO_WATCH_DIR_KEY:
 		break;  // ignored, see hetero_dev.h
@@ -102,15 +89,6 @@ int main(int argc, char **argv)
 	if (skel == NULL) {
 		perror("Failed to open BPF skeleton");
 		goto cleanup;
-	}
-
-	// Optionally resize the (preallocated) folio metadata map before loading
-	if (args.max_folios) {
-		if (bpf_map__set_max_entries(skel->maps.folio_metadata_map, args.max_folios)) {
-			fprintf(stderr, "Failed to set max_folios to %lu\n", args.max_folios);
-			goto cleanup;
-		}
-		printf("Tracking up to %lu folios\n", args.max_folios);
 	}
 
 	// Load programs

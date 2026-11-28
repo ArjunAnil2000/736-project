@@ -5,6 +5,14 @@
 
 #include "cache_ext_lib.bpf.h"
 #include "hetero_dev.bpf.h"  // enum folio_device, dev_idx_map, folio_dev_idx()
+#include "hetero_debug.bpf.h" // debug_* counters (validation only)
+#include "hetero_iter.bpf.h"  // per-call eviction budget
+// debug_policy slots: [dev * 4 + (insert seq - min_seq)], i.e. 0-3 = fast
+// folios inserted at min_seq+0..3, 4-7 = slow folios inserted at min_seq+0..3.
+// debug_aux: 0/1 = fast/slow folios moved to the next generation because they
+// were locked, dirty or under writeback; 2/3 = fast/slow folios protected by tier;
+// 4/5 = fast/slow sum of residence time at eviction (us); 6/7 = fast/slow sum
+// of the scan index at which victims were chosen.
 
 char _license[] SEC("license") = "GPL";
 
@@ -32,20 +40,23 @@ char _license[] SEC("license") = "GPL";
 // Maps //
 //////////
 
-// Upper bound on tracked folios (4 KiB pages): 1M ~= 4 GiB of page cache.
-// The map is preallocated, so this costs memory up front even when empty.
-// The loader can raise it with --max_folios (bpf_map__set_max_entries).
-#define MAX_NR_FOLIOS 1000000
+#define MAX_NR_FOLIOS 4000000
 #define MAX_NR_GHOST_ENTRIES 400000
 
 // How many generations younger than stock MGLRU a new folio from DEV_SLOW
 // starts in (see lru_gen_add_folio). 0 = stock MGLRU placement.
-#define SLOW_GEN_BOOST 1
+#ifndef SLOW_GEN_BOOST
+#define SLOW_GEN_BOOST 1  // override with -DSLOW_GEN_BOOST=N (0 = bias off)
+#endif
 
 struct folio_metadata {
 	s64 accesses;
 	s64 gen;
 	u32 dev_idx;  // enum folio_device, fixed for the folio's lifetime
+	u64 victim_call;  // id of the evict_folios call that last chose it (hetero_iter.bpf.h)
+#ifdef HETERO_DEBUG
+	u64 debug_insert_ns;  // debug only: insertion time
+#endif
 };
 
 struct {
@@ -132,6 +143,9 @@ struct mglru_global_metadata {
 	unsigned long avg_total[MAX_NR_TIERS];
 	unsigned long protected[MAX_NR_TIERS - 1];
 	long nr_pages[MAX_NR_GENS];
+#ifdef HETERO_DEBUG
+	u64 debug_forced_min_seq;  // times an empty oldest generation was retired
+#endif
 };
 
 struct {
@@ -302,7 +316,7 @@ static inline void read_ctrl_pos(struct mglru_global_metadata *lrugen, int tier,
 }
 
 // Needs the LRU lock. Why???
-static inline void reset_ctrl_pos(struct mglru_global_metadata *lrugen, bool carryover)
+static __always_inline void reset_ctrl_pos(struct mglru_global_metadata *lrugen, bool carryover)
 {
 	int tier;
 	bool clear = carryover ? NR_HIST_GENS == 1 : NR_HIST_GENS > 1;
@@ -415,26 +429,28 @@ static inline bool folio_test_active(struct folio *folio)
 }
 
 // Only counts up to 3.
-static inline int order_base_2(int n)
+/*
+ * Tier from the folio's access count. In cache_ext the read that caused the
+ * miss also calls folio_accessed(), so `accesses` (which starts at 0) is the
+ * number of re-accesses plus one. The kernel's tier is order_base_2(refs + 1)
+ * = ceil(log2(refs + 1)) for refs re-accesses, i.e. ceil(log2(accesses)) here:
+ * 1 -> tier 0, 2 -> 1, 3-4 -> 2, >= 5 -> 3.
+ *
+ * The upstream port started the count at 1 and used floor(log2(accesses)), so
+ * every folio was already in tier 1 after its miss read and tier 0 never had
+ * any evictions or refaults. The PID controller's reference (tier 0's refault
+ * rate) was then a constant rather than a measurement, so tier protection
+ * swung on small changes in the other tiers.
+ */
+static inline int lru_tier_from_refs(int accesses)
 {
-	if (n <= 1) {
+	if (accesses <= 1)
 		return 0;
-	} else if (n <= 3) {
+	if (accesses == 2)
 		return 1;
-	} else if (n <= 7) {
+	if (accesses <= 4)
 		return 2;
-	} else if (n <= 8) {
-		return 3;
-	}
 	return 3;
-}
-
-static inline int lru_tier_from_refs(int refs)
-{
-	/* see the comment in folio_lru_refs() */
-	// kernel does some off-by-one calculation here, we remove the +1
-	// return order_base_2(refs + 1);
-	return order_base_2(refs);
 }
 
 static inline bool gen_within_limits(unsigned int gen)
@@ -501,6 +517,15 @@ static inline bool lru_gen_add_folio(struct folio *folio, u32 dev_idx)
 			seq = max_seq;
 	}
 
+#ifdef HETERO_DEBUG
+	{
+		unsigned long debug_off = seq - min_seq;
+		if (debug_off > 3)
+			debug_off = 3;
+		DEBUG_POLICY_INC((int)(dev_idx * 4 + debug_off));
+	}
+#endif
+
 	unsigned int gen = lru_gen_from_seq(seq);
 	if (!gen_within_limits(gen)) {
 		bpf_printk(
@@ -510,7 +535,12 @@ static inline bool lru_gen_add_folio(struct folio *folio, u32 dev_idx)
 	}
 
 	// Update policy metadata
-	struct folio_metadata metadata = { .accesses = 1, .gen = gen, .dev_idx = dev_idx };
+	// accesses starts at 0: the miss read's own folio_accessed() makes it 1
+	// (tier 0), see lru_tier_from_refs().
+	struct folio_metadata metadata = { .accesses = 0, .gen = gen, .dev_idx = dev_idx };
+#ifdef HETERO_DEBUG
+	metadata.debug_insert_ns = bpf_ktime_get_ns();
+#endif
 	__u64 key = (__u64)folio;
 	int ret = bpf_map_update_elem(&folio_metadata_map, &key, &metadata,
 				      BPF_ANY);
@@ -528,7 +558,14 @@ static inline bool lru_gen_add_folio(struct folio *folio, u32 dev_idx)
 	}
 
 	// lru_gen_update_size(lruvec, folio, -1, gen);
-	ret = bpf_cache_ext_list_add(mglru_lists[gen], folio);
+	// Insert at the tail. Eviction scans each generation from the head, so
+	// tail insertion keeps a generation in insertion order and evicts its
+	// oldest folio first, as the kernel's MGLRU does (it adds at the head
+	// and evicts from the tail). The upstream port added at the head, so
+	// the newest folios, often still locked by their in-flight read, were
+	// scanned first and moved to the next generation as if protected;
+	// because HDD reads stay in flight ~75x longer, that favoured HDD folios.
+	ret = bpf_cache_ext_list_add_tail(mglru_lists[gen], folio);
 	if (ret != 0) {
 		bpf_printk(
 			"cache_ext: Failed to add folio to mglru_lists[%d]\n",
@@ -673,6 +710,7 @@ struct eviction_metadata {
 	__u64 next_gen;
 	__u64 iter_reached;
 	__u64 tier_threshold;
+	__u64 nr_visited;  // folios the current scan has visited
 };
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -743,16 +781,31 @@ static int mglru_iter_fn(int idx, struct cache_ext_list_node *a)
 		return CACHE_EXT_EVICT_NODE;
 	}
 	eviction_meta->iter_reached = idx;
+	eviction_meta->nr_visited++;
+
+	// Stop once the kernel's request is met.
+	struct iter_call *call = iter_call_get();
+	if (!call || call->remaining == 0)
+		return CACHE_EXT_STOP_ITER;
 
 	// Get folio metadata
 	__u64 key = (__u64)a->folio;
 	struct folio_metadata *meta =
 		bpf_map_lookup_elem(&folio_metadata_map, &key);
 	if (!meta) {
+		// Untracked folio on our list: evict it, within the budget. It
+		// cannot be marked as this call's victim, so it could be
+		// proposed again if the scan wraps; that is rare (the metadata
+		// map is sized for the cgroup).
 		bpf_printk("cache_ext: iter_fn: Failed to get metadata\n");
-		// TODO: Maybe we should evict it instead?
+		call->remaining--;
 		return CACHE_EXT_EVICT_NODE;
 	}
+
+	// Stop when the scan wraps around to a folio this call already chose
+	// (victims are moved to the tail of this list).
+	if (meta->victim_call == call->id)
+		return CACHE_EXT_STOP_ITER;
 
 	int tier_threshold = eviction_meta->tier_threshold;
 	if (tier_threshold > MAX_NR_TIERS || tier_threshold < 0) {
@@ -763,6 +816,7 @@ static int mglru_iter_fn(int idx, struct cache_ext_list_node *a)
 
 	/* protected */
 	if (tier > tier_threshold) {
+		DEBUG_AUX_ADD(2 + (meta->dev_idx & 1), 1);
 		update_protected_stat(lrugen, tier, folio_nr_pages(a->folio));
 		// promote to next gen
 		// TODO: Update nr_pages stats
@@ -776,6 +830,7 @@ static int mglru_iter_fn(int idx, struct cache_ext_list_node *a)
 	/* waiting for writeback */
 	if (folio_test_locked(a->folio) || folio_test_writeback(a->folio) ||
 	    folio_test_dirty(a->folio)) {
+		DEBUG_AUX_ADD(meta->dev_idx & 1, 1);
 		// promote to next gen
 		int num_pages = folio_nr_pages(a->folio);
 		update_nr_pages_stat(lrugen, eviction_meta->curr_gen, -num_pages);
@@ -783,6 +838,8 @@ static int mglru_iter_fn(int idx, struct cache_ext_list_node *a)
 		atomic_long_store(&meta->gen, eviction_meta->next_gen);
 		return CACHE_EXT_CONTINUE_ITER;
 	}
+	iter_call_take(call, &meta->victim_call);
+	DEBUG_AUX_ADD(6 + (meta->dev_idx & 1), idx);
 	return CACHE_EXT_EVICT_NODE;
 }
 
@@ -824,6 +881,8 @@ void BPF_STRUCT_OPS(mglru_evict_folios, struct cache_ext_eviction_ctx *eviction_
 		.tier_threshold = tier_threshold,
 	};
 	set_eviction_metadata(&ev_meta);
+	iter_call_begin();
+	iter_call_budget(eviction_ctx);
 
 	assert_valid_gen_0(next_gen);
 
@@ -846,9 +905,37 @@ void BPF_STRUCT_OPS(mglru_evict_folios, struct cache_ext_eviction_ctx *eviction_
 	struct eviction_metadata *eviction_meta = get_eviction_metadata();
 	if (eviction_meta == NULL) return;
 	if (eviction_ctx->nr_folios_to_evict < eviction_ctx->request_nr_folios_to_evict) {
+		/*
+		 * Retire an empty oldest generation. min_seq normally advances
+		 * only when nr_pages[oldest] <= 4, but nr_pages is a counter and
+		 * can drift from the list's contents. With all MAX_NR_GENS
+		 * generations in use, max_seq cannot advance either, so a stale
+		 * count above 4 on an empty oldest list stalls eviction for
+		 * good. If the scan visited no folio at all, the list is empty:
+		 * advance min_seq regardless of the counter (as the kernel does,
+		 * which checks the list itself) and reset the stale count.
+		 */
+		if (eviction_meta->nr_visited == 0) {
+			bpf_spin_lock(&lrugen->lock);
+			if (READ_ONCE(lrugen->min_seq) == min_seq &&
+			    lrugen->max_seq - lrugen->min_seq > MIN_NR_GENS) {
+				lrugen->nr_pages[oldest_gen & (MAX_NR_GENS - 1)] = 0;
+				WRITE_ONCE(lrugen->min_seq, min_seq + 1);
+				reset_ctrl_pos(lrugen, true);
+#ifdef HETERO_DEBUG
+				lrugen->debug_forced_min_seq++;
+#endif
+			}
+			bpf_spin_unlock(&lrugen->lock);
+		}
 		min_seq = READ_ONCE(lrugen->min_seq);
 		oldest_gen = lru_gen_from_seq(min_seq);
 		next_gen = (oldest_gen + 1) % MAX_NR_GENS;
+		// The oldest generation may have changed: keep the page-count
+		// bookkeeping in mglru_iter_fn pointing at the scanned lists.
+		eviction_meta->curr_gen = oldest_gen;
+		eviction_meta->next_gen = next_gen;
+		iter_call_budget(eviction_ctx);
 		__u64 next_gen_list = mglru_lists[next_gen];
 		__u64 oldest_gen_list = mglru_lists[oldest_gen];
 		struct cache_ext_iterate_opts opts = {
@@ -868,6 +955,7 @@ void BPF_STRUCT_OPS(mglru_evict_folios, struct cache_ext_eviction_ctx *eviction_
 	s64 failed_evicted = max(0, eviction_ctx->request_nr_folios_to_evict - eviction_ctx->nr_folios_to_evict);
 	__sync_fetch_and_add(&lrugen->failed_evicted, failed_evicted);
 	__sync_fetch_and_add(&lrugen->success_evicted, success_evicted);
+	debug_after_evict(eviction_ctx);
 	if (eviction_ctx->nr_folios_to_evict < eviction_ctx->request_nr_folios_to_evict) {
 		bpf_printk("cache_ext: Failed to evict requested number of folios: %d/%d. Used list idx %d, list ptr: %p. Iter reached: %d\n",
 				eviction_ctx->nr_folios_to_evict,
@@ -884,6 +972,7 @@ void BPF_STRUCT_OPS(mglru_folio_added, struct folio *folio)
 	if (dev_idx < 0) {
 		return;
 	}
+	DEBUG_DEV_INC(debug_added, dev_idx);
 	lru_gen_add_folio(folio, (u32)dev_idx);
 }
 
@@ -892,6 +981,7 @@ void BPF_STRUCT_OPS(mglru_folio_accessed, struct folio *folio)
 	if (!is_folio_relevant(folio)) {
 		return;
 	}
+	DEBUG_DEV_INC(debug_accessed, folio_dev_idx(folio));
 	folio_inc_refs(folio);
 }
 
@@ -900,6 +990,7 @@ void BPF_STRUCT_OPS(mglru_folio_evicted, struct folio *folio)
 	if (!is_folio_relevant(folio)) {
 		return;
 	}
+	DEBUG_DEV_INC(debug_evicted, folio_dev_idx(folio));
 	DEFINE_LRUGEN_void;
 	// Remove tracked metadata
 	struct folio_metadata *metadata;
@@ -911,6 +1002,14 @@ void BPF_STRUCT_OPS(mglru_folio_evicted, struct folio *folio)
 			"cache_ext: Tried to delete folio metadata but not found in map.\n");
 		return;
 	}
+#ifdef HETERO_DEBUG
+	{
+		u64 debug_now = bpf_ktime_get_ns();
+		if (debug_now > metadata->debug_insert_ns)
+			DEBUG_AUX_ADD(4 + (metadata->dev_idx & 1),
+				      (debug_now - metadata->debug_insert_ns) / 1000);
+	}
+#endif
 	// Add ghost entry for refault detection
 	int tier = lru_tier_from_refs(atomic_long_read(&metadata->accesses));
 	insert_ghost_entry_for_folio(folio, tier);
