@@ -5,15 +5,12 @@
 
 #include "cache_ext_lib.bpf.h"
 #include "hetero_dev.bpf.h"  // enum folio_device, dev_idx_map, folio_dev_idx()
+#include "hetero_debug.bpf.h" // debug_* counters (validation only)
+
+// debug_policy slots: 0 = batches that scanned fast_list first,
+//                     1 = batches that scanned slow_list first.
 
 char _license[] SEC("license") = "GPL";
-
-// #define DEBUG
-#ifdef DEBUG
-#define dbg_printk(fmt, ...) bpf_printk(fmt, ##__VA_ARGS__)
-#else
-#define dbg_printk(fmt, ...)
-#endif
 
 static u64 fast_list;
 static u64 slow_list;
@@ -89,6 +86,7 @@ void BPF_STRUCT_OPS(fifo_evict_folios, struct cache_ext_eviction_ctx *eviction_c
 	bool prefer_fast = (bpf_get_prandom_u32() & 3U) != 0;
 	u64 primary_list = prefer_fast ? fast_list : slow_list;
 	u64 fallback_list = prefer_fast ? slow_list : fast_list;
+	DEBUG_POLICY_INC(prefer_fast ? 0 : 1);
 
 	int ret = bpf_cache_ext_list_iterate(memcg, primary_list, bpf_lru_evict_cb, eviction_ctx);
 
@@ -99,6 +97,7 @@ void BPF_STRUCT_OPS(fifo_evict_folios, struct cache_ext_eviction_ctx *eviction_c
 	if (eviction_ctx->nr_folios_to_evict >= eviction_ctx->request_nr_folios_to_evict) {
 		// Limit the number of selected eviction candidates to the kernel's requested count
 		eviction_ctx->nr_folios_to_evict = eviction_ctx->request_nr_folios_to_evict;
+		debug_after_evict(eviction_ctx);
 		return;
 	}
 	ret = bpf_cache_ext_list_iterate(memcg, fallback_list, bpf_lru_evict_cb, eviction_ctx);
@@ -110,9 +109,11 @@ void BPF_STRUCT_OPS(fifo_evict_folios, struct cache_ext_eviction_ctx *eviction_c
 	if (eviction_ctx->nr_folios_to_evict > eviction_ctx->request_nr_folios_to_evict) {
 		eviction_ctx->nr_folios_to_evict = eviction_ctx->request_nr_folios_to_evict;
 	}
+	debug_after_evict(eviction_ctx);
 }
 
 void BPF_STRUCT_OPS(fifo_folio_evicted, struct folio *folio) {
+	DEBUG_DEV_INC(debug_evicted, folio_dev_idx(folio));
 	// if (bpf_cache_ext_list_del(folio)) {
 	// 	bpf_printk("cache_ext: Failed to delete folio from list\n");
 	// 	return;
@@ -122,6 +123,7 @@ void BPF_STRUCT_OPS(fifo_folio_evicted, struct folio *folio) {
 void BPF_STRUCT_OPS(fifo_folio_added, struct folio *folio) {
 	if (!is_folio_relevant(folio))
 		return;
+	DEBUG_DEV_INC(debug_added, folio_dev_idx(folio));
 
 	switch (get_folio_device_speed(folio)) {
 	case SLOW_SPEED:
@@ -145,6 +147,7 @@ void BPF_STRUCT_OPS(fifo_folio_accessed, struct folio *folio) {
 	if (!is_folio_relevant(folio)) {
 		return;
 	}
+	DEBUG_DEV_INC(debug_accessed, folio_dev_idx(folio));
 
 	switch (get_folio_device_speed(folio)) {
 	case SLOW_SPEED:
